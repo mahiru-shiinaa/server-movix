@@ -5,6 +5,7 @@ dotenv.config();
 import cors from "cors";
 import cookieParser from "cookie-parser";
 import * as database from "./config/database";
+import mainV1Routes from "./api/v1/routes/index.route";
 
 // Khởi động app và thiết lập port
 const app: Express = express();
@@ -26,7 +27,8 @@ app.use(
 ); //  cấu hình mặc định: cho phép tất cả origin
 
 app.use(cookieParser());
-
+// Liên kết index API
+mainV1Routes(app);
 app.listen(port, () => {
   console.log(`App listening on port ${port}`);
 });
