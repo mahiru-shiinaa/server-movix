@@ -26,7 +26,9 @@ app.use(
   })
 ); //  cấu hình mặc định: cho phép tất cả origin
 
+// Dùng để check cookie đăng nhập
 app.use(cookieParser());
+
 // Liên kết index API
 mainV1Routes(app);
 app.listen(port, () => {
