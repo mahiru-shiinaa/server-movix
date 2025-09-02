@@ -1,4 +1,4 @@
-import { Document } from "mongoose";
+
 
 export enum UserStatus {
   ACTIVE = "active",

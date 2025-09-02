@@ -5,7 +5,7 @@ import * as generateHelper from "../../../helpers/generate";
 import * as sendMailHelper from "../../../helpers/sendMail";
 import Otp, { IOtp } from "../models/otp.model";
 import { IUser, UserRole, UserStatus } from "../../../types/user.type";
-import ResetToken from "../models/resettoken.model";
+import ResetToken from "../models/resetToken.model";
 
 //[POST] /api/v1/auth/register
 export const register = async (req: Request, res: Response): Promise<void> => {
@@ -15,25 +15,26 @@ export const register = async (req: Request, res: Response): Promise<void> => {
     const username: string = req.body.username;
     const password: string = req.body.password;
     //2. Kiểm tra tồn tại
-    const checkUser = await User.findOne({ $or: [{ username }, { email }] });
-    // Báo lỗi nếu đã tồn tại
-    if (checkUser?.email === email) {
-      res.status(400).json({ message: "Email đã được sử dụng" });
-      return;
+    const checkUser = await User.findOne({ $or: [{ username: username }, { email: email }] });
+
+    if (checkUser) {
+      if (checkUser.email === email) {
+        res.status(400).json({ message: "Email đã được sử dụng" });
+        return;
+      }
+      if (checkUser.username === username) {
+        res.status(400).json({ message: "Tên đăng nhập đã được sử dụng" });
+        return;
+      }
     }
-    if (checkUser?.username === username) {
-      res.status(400).json({ message: "Tên đăng nhập đã được sử dụng" });
-      return;
-    }
+
     //3. Tạo người dùng nhưng chưa duyệt, status ở trạng thái pending
     const token = generateHelper.generateToken();
-    req.body.token = token;
-    req.body.password = md5(password);
-    req.body.status = UserStatus.PENDING;
+
     const infoUser: IUser = {
       email,
       username,
-      password,
+      password: md5(password),
       token,
       role: UserRole.USER,
       status: UserStatus.PENDING,
@@ -134,7 +135,7 @@ export const cancelRegister = async (
     return;
   } catch (error) {
     console.error(error);
-    res.status(500).json({ message: "Loi server" });
+    res.status(500).json({ message: "Lỗi server" });
   }
 };
 
@@ -333,7 +334,11 @@ export const resetPassword = async (
   res: Response
 ): Promise<void> => {
   try {
-    const { email, resetToken, newPassword } = req.body;
+    const { email, resetToken, newPassword } = req.body as {
+      email: string;
+      resetToken: string;
+      newPassword: string;
+    };
     const resetTokenCheck = await ResetToken.findOne({
       email: email,
       resetToken: resetToken,
@@ -346,7 +351,7 @@ export const resetPassword = async (
     }
     const user = await User.findOne({ email: email, deleted: false });
     if (!user) {
-      res.status(400).json({ message: "Email không tồn tại" });
+      res.status(400).json({ message: "Tài khoản không tồn tại" });
       return;
     }
     if (user.status === UserStatus.BLOCKED) {

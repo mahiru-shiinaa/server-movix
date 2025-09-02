@@ -26,6 +26,6 @@ const otpSchema = new Schema<IOtp>(
 );
 
 // Model với type
-const Otp = model<IOtp>("Category", otpSchema, "otps");
+const Otp = model<IOtp>("Otp", otpSchema, "otps");
 
 export default Otp;

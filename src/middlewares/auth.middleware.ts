@@ -13,7 +13,9 @@ export const authMiddleware =
           .json({ Code: 400, message: "Dữ liệu lỗi, vui lòng đăng nhập lại" });
         return;
       }
-      const user = await User.findOne({ token: token, deleted: false });
+      const user = await User.findOne({ token: token, deleted: false }).select(
+        "-password -token" 
+      );
       if (!user) {
         res.status(401).json({ Code: 400, message: "Tài khoản không tồn tại" });
         return;
