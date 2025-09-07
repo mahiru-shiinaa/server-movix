@@ -31,6 +31,15 @@ const userSchema = new Schema<IUserDocument>(
     timestamps: true, // Tự động thêm createdAt và updatedAt
   }
 );
+// ✅ Indexes - Tạo mục lục để query nhanh
+userSchema.index({ username: 1 });
+userSchema.index({ email: 1 });
+userSchema.index({ status: 1 });
+userSchema.index({ role: 1 });
+userSchema.index({ role: 1, status: 1 });
+userSchema.index({ token: 1, deleted: 1 });
+userSchema.index({ deleted: 1 });
+
 
 // Model với type
 const User = model<IUserDocument>("User", userSchema, "users");

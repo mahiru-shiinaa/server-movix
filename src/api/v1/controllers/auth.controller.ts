@@ -3,7 +3,7 @@ import User from "../models/user.model";
 import md5 from "md5";
 import * as generateHelper from "../../../helpers/generate";
 import * as sendMailHelper from "../../../helpers/sendMail";
-import Otp, { IOtp } from "../models/otp.model";
+import Otp from "../models/otp.model";
 import { IUser, UserRole, UserStatus } from "../../../types/user.type";
 import ResetToken from "../models/resetToken.model";
 

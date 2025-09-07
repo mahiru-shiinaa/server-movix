@@ -35,3 +35,40 @@ export const authMiddleware =
       res.status(500).json({ message: "Lỗi server" });
     }
   };
+
+
+export const optionalAuthMiddleware = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const token = req.cookies.token;
+    if (!token) {
+      // guest
+      req.user = null;
+      return next();
+    }
+
+    const user = await User.findOne({ token, deleted: false }).select(
+      "-password -token"
+    );
+
+    if (!user) {
+      req.user = null; // vẫn cho qua nhưng coi như guest
+      return next();
+    }
+
+    if (user.status === UserStatus.BLOCKED) {
+      req.user = null;
+      return next();
+    }
+
+    req.user = user; // đã đăng nhập
+    next();
+  } catch (error) {
+    console.error(error);
+    req.user = null; // nếu lỗi thì fallback guest
+    next();
+  }
+};
