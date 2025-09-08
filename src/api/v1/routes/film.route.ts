@@ -2,10 +2,13 @@ import { Router} from "express";
 const router: Router = Router();
 
 import * as filmController from "../controllers/film.controller";
-import { authMiddleware } from "../../../middlewares/auth.middleware";
+import { authMiddleware, optionalAuthMiddleware } from "../../../middlewares/auth.middleware";
 import { UserRole } from "../../../types/user.type";
 
 // router.get("/", filmController.index);
+
+//[GET] DETAIL: /api/v1/films/:id
+router.get("/:slug", optionalAuthMiddleware, filmController.detail);
 
 //[POST] CREATE: /api/v1/films
 router.post("/create", authMiddleware(UserRole.ADMIN), filmController.create);

@@ -1,5 +1,3 @@
-
-
 export enum UserStatus {
   ACTIVE = "active",
   BLOCKED = "blocked",
@@ -20,11 +18,12 @@ export interface IUser {
   address?: string;
   avatar?: string;
   role: UserRole;
-  token: string;
+  // ✅ THAY ĐỔI: Bỏ token, thêm refreshToken
+  // token: string; // ❌ Xóa trường này
+  refreshToken?: string; // ✅ Lưu refresh token trong DB để có thể revoke
   status: UserStatus;
   deleted?: boolean;
   deletedAt?: Date;
   createdAt?: Date;
   updatedAt?: Date;
 }
-

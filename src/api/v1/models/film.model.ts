@@ -1,6 +1,6 @@
 // src/models/film/film.model.ts
 
-import mongoose, { Schema, model } from "mongoose";
+import mongoose, { HydratedDocument, Schema, model } from "mongoose";
 import { IFilm } from "../../../types/film.type";
 import { CommonStatus } from "../../../types/common.type";
 import slug from "mongoose-slug-updater";
@@ -9,7 +9,7 @@ import slug from "mongoose-slug-updater";
 mongoose.plugin(slug);
 
 
-export interface IFilmDocument extends IFilm, Document{}
+export type IFilmDocument = HydratedDocument<IFilm>;
 /**
  * Schema định nghĩa cấu trúc của document Film trong MongoDB.
  * Nó ánh xạ từ IFilmDocument interface để đảm bảo type-safety.

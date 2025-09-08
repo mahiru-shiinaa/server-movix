@@ -11,7 +11,8 @@ import rateLimit from "express-rate-limit";
 export const otpLimiterByEmail = rateLimit({
   windowMs: 60 * 1000, // 60 giây
   max: 1,              // Tối đa 1 request trong 60 giây
-  keyGenerator: (req: Request): string => req.body.email || req.ip, // Ưu tiên giới hạn theo email
+  keyGenerator: (req: Request): string => req.body.email, // Ưu tiên giới hạn theo email
+  standardHeaders: true,
   message: {
     code: 429,
     message: "Bạn chỉ được yêu cầu OTP mỗi 60 giây.",
@@ -46,7 +47,6 @@ router.post("/password/forgot", validateForgotPassword, otpLimiterByEmail, authC
 router.post("/password/otp", authController.otp);
 //[POST] RESET PASSWORD: /api/v1/auth/password/reset
 router.post("/password/reset", validateResetPassword, authController.resetPassword);
-
 
 
 export default router;

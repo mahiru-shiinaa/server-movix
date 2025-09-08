@@ -1,6 +1,13 @@
 import { Request, Response } from "express";
 import User from "../models/user.model";
-import md5 from "md5";
+// ✅ THAY ĐỔI: Import bcrypt và jwt helpers thay vì md5
+// import md5 from "md5"; // ❌ Xóa md5
+import { hashPassword, comparePassword } from "../../../helpers/password";
+import {
+  generateAccessToken,
+  generateRefreshToken,
+  ITokenPayload,
+} from "../../../helpers/jwt";
 import * as generateHelper from "../../../helpers/generate";
 import * as sendMailHelper from "../../../helpers/sendMail";
 import Otp from "../models/otp.model";
@@ -14,8 +21,11 @@ export const register = async (req: Request, res: Response): Promise<void> => {
     const email: string = req.body.email;
     const username: string = req.body.username;
     const password: string = req.body.password;
+
     //2. Kiểm tra tồn tại
-    const checkUser = await User.findOne({ $or: [{ username: username }, { email: email }] });
+    const checkUser = await User.findOne({
+      $or: [{ username: username }, { email: email }],
+    });
 
     if (checkUser) {
       if (checkUser.email === email) {
@@ -28,19 +38,20 @@ export const register = async (req: Request, res: Response): Promise<void> => {
       }
     }
 
-    //3. Tạo người dùng nhưng chưa duyệt, status ở trạng thái pending
-    const token = generateHelper.generateToken();
+    //3. ✅ THAY ĐỔI: Hash password bằng bcrypt và không lưu token nữa
+    const hashedPassword = await hashPassword(password);
 
-    const infoUser: IUser = {
+    const infoUser: Partial<IUser> = {
       email,
       username,
-      password: md5(password),
-      token,
+      password: hashedPassword, // ✅ Lưu password đã hash
+      // token, // ❌ Không cần token nữa
       role: UserRole.USER,
       status: UserStatus.PENDING,
     };
     const user = new User(infoUser);
     await user.save();
+
     //4. Tạo otp và gửi mail;
     const otpRandom = generateHelper.generateRandomNumber();
     const otbObject = {
@@ -51,13 +62,13 @@ export const register = async (req: Request, res: Response): Promise<void> => {
     };
     const otp = new Otp(otbObject);
     await otp.save();
-    const subject = "Movix - Mã OTP xác minh tài khoản";
+    const subject = "Movix - Mã OTP xác minh tài khoản";
     sendMailHelper.sendMail(email, subject, otpRandom);
-    res.json({ code: 200, message: "OTP đã được gửi qua email của bạn" });
+    res.json({ code: 200, message: "OTP đã được gửi qua email của bạn" });
     return;
   } catch (error) {
     console.error(error);
-    res.status(500).json({ message: "Lỗi server" });
+    res.status(500).json({ message: "Lỗi server" });
   }
 };
 
@@ -71,7 +82,7 @@ export const checkEmailOtp = async (
     const { email, otp } = req.body;
     //2. Kiem tra otp có nhập hay không
     if (!otp) {
-      res.status(400).json({ message: "Vui lòng nhập otp" });
+      res.status(400).json({ message: "Vui lòng nhập otp" });
       return;
     }
     //3. Kiem tra otp có tồn tại hay không
@@ -82,32 +93,57 @@ export const checkEmailOtp = async (
     });
     //4. Nếu không tồn tại thông báo lỗi
     if (!otpCheck) {
-      res.status(400).json({ message: "Không tìm thấy otp" });
+      res.status(400).json({ message: "Không tìm thấy otp" });
       return;
     }
     //5. Kiem tra email cua nguoi dung co ton tai hay khong
     const user = await User.findOne({ email: email, deleted: false });
     if (!user) {
-      res.status(400).json({ message: "Tài khoản không tồn tại" });
+      res.status(400).json({ message: "Tài khoản không tồn tại" });
       return;
     }
-    //6. Nếu vượt qua hết thì cập nhập trạng thái user và đăng nhập
+
+    //6. ✅ THAY ĐỔI: Cập nhật status và tạo JWT tokens
     user.status = UserStatus.ACTIVE;
+
+    // Tạo JWT tokens
+    const tokenPayload: ITokenPayload = {
+      userId: user._id.toString(),
+      username: user.username,
+      email: user.email,
+      role: user.role,
+    };
+
+    const accessToken = generateAccessToken(tokenPayload);
+    const refreshToken = generateRefreshToken(user._id.toString());
+
+    // Lưu refresh token vào database
+    user.refreshToken = refreshToken;
     await user.save();
+
     // Xóa otp đi
     await Otp.findOneAndDelete({ email: email, type: "register" });
-    // Lưu token vào cookie để front-end dùng
-    res.cookie("token", user.token, {
+
+    // ✅ Set cookies với JWT tokens
+    res.cookie("accessToken", accessToken, {
       httpOnly: true,
-      secure: process.env.NODE_ENV === "production", // production thì secure: true
+      secure: process.env.NODE_ENV === "production",
       sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
-      maxAge: 7 * 24 * 60 * 60 * 1000,
+      maxAge: 15 * 60 * 1000, // 15 phút
     });
-    res.json({ code: 200, message: "Xác minh email và đăng nhập thành công" });
+
+    res.cookie("refreshToken", refreshToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 ngày
+    });
+
+    res.json({ code: 200, message: "Xác minh email và đăng nhập thành công" });
     return;
   } catch (error) {
     console.error(error);
-    res.status(500).json({ message: "Lỗi server" });
+    res.status(500).json({ message: "Lỗi server" });
   }
 };
 
@@ -135,7 +171,7 @@ export const cancelRegister = async (
     return;
   } catch (error) {
     console.error(error);
-    res.status(500).json({ message: "Lỗi server" });
+    res.status(500).json({ message: "Lỗi server" });
   }
 };
 
@@ -173,9 +209,9 @@ export const resendOtp = async (req: Request, res: Response): Promise<void> => {
     };
     const otp = new Otp(otbObject);
     await otp.save();
-    const subject = "Movix - Mã OTP xác minh tài khoản";
+    const subject = "Movix - Mã OTP xác minh tài khoản";
     sendMailHelper.sendMail(email, subject, otpRandom);
-    res.json({ code: 200, message: "OTP đã được gửi qua email của bạn" });
+    res.json({ code: 200, message: "OTP đã được gửi qua email của bạn" });
     return;
   } catch (error) {
     console.error(error);
@@ -207,18 +243,41 @@ export const login = async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
-    const isMatch = md5(password) === user.password;
+    // ✅ THAY ĐỔI: Dùng bcrypt để so sánh password
+    const isMatch = await comparePassword(password, user.password);
     if (!isMatch) {
       res.status(400).json({ message: "Mật khẩu không đúng!" });
       return;
     }
 
-    // Lưu token vào cookie để front-end dùng
-    res.cookie("token", user.token, {
+    // ✅ Tạo JWT tokens
+    const tokenPayload: ITokenPayload = {
+      userId: user._id.toString(),
+      username: user.username,
+      email: user.email,
+      role: user.role,
+    };
+
+    const accessToken = generateAccessToken(tokenPayload);
+    const refreshToken = generateRefreshToken(user._id.toString());
+
+    // Lưu refresh token mới vào database (revoke token cũ nếu có)
+    user.refreshToken = refreshToken;
+    await user.save();
+
+    // ✅ Set cookies với JWT tokens
+    res.cookie("accessToken", accessToken, {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
       sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
-      maxAge: 7 * 24 * 60 * 60 * 1000,
+      maxAge: 15 * 60 * 1000, // 15 phút
+    });
+
+    res.cookie("refreshToken", refreshToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 ngày
     });
 
     res.json({ code: 200, message: "Đăng nhập thành công" });
@@ -232,7 +291,18 @@ export const login = async (req: Request, res: Response): Promise<void> => {
 //[POST] /api/v1/auth/logout
 export const logout = async (req: Request, res: Response): Promise<void> => {
   try {
-    res.clearCookie("token");
+    // ✅ THAY ĐỔI: Xóa refresh token khỏi database để revoke session
+    const refreshToken = req.cookies.refreshToken;
+    if (refreshToken) {
+      await User.findOneAndUpdate(
+        { refreshToken: refreshToken },
+        { $unset: { refreshToken: 1 } } // Xóa trường refreshToken
+      );
+    }
+
+    // Xóa cả 2 cookies
+    res.clearCookie("accessToken");
+    res.clearCookie("refreshToken");
     res.json({ code: 200, message: "Đăng xuất thành công" });
     return;
   } catch (error) {
@@ -358,20 +428,43 @@ export const resetPassword = async (
       res.status(400).json({ message: "Tài khoản đã bị khóa" });
       return;
     }
-    if (user.password === md5(newPassword)) {
+    const isSamePassword = await comparePassword(newPassword, user.password);
+    if (isSamePassword) {
       res
         .status(400)
         .json({ message: "Mật khẩu mới không được giống mật khẩu cũ" });
       return;
     }
-    user.password = md5(newPassword);
+    // Cập nhập Password mới
+    user.password = await hashPassword(newPassword);
+
+    // ✅ Tạo JWT tokens
+    const tokenPayload: ITokenPayload = {
+      userId: user._id.toString(),
+      username: user.username,
+      email: user.email,
+      role: user.role,
+    };
+    const accessToken = generateAccessToken(tokenPayload);
+    const refreshToken = generateRefreshToken(user._id.toString());
+
+    // Lưu refresh token mới vào database (revoke token cũ nếu có)
+    user.refreshToken = refreshToken;
     await user.save();
     await ResetToken.findOneAndDelete({ email: email });
-    res.cookie("token", user.token, {
+    // ✅ Set cookies với JWT tokens
+    res.cookie("accessToken", accessToken, {
       httpOnly: true,
-      secure: process.env.NODE_ENV === "production", // production thì secure: true
+      secure: process.env.NODE_ENV === "production",
       sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
-      maxAge: 7 * 24 * 60 * 60 * 1000,
+      maxAge: 15 * 60 * 1000, // 15 phút
+    });
+
+    res.cookie("refreshToken", refreshToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 ngày
     });
     res.json({ code: 200, message: "Đổi mật khẩu thành công" });
     return;
