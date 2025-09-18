@@ -2,7 +2,7 @@ import { Router} from "express";
 const router: Router = Router();
 
 import * as userController from "../controllers/user.controller";
-import { authMiddleware } from "../../../middlewares/auth.middleware";
+import { authMiddleware, optionalAuthMiddleware } from "../../../middlewares/auth.middleware";
 import { UserRole } from "../../../types/user.type";
 import { validateChangePassword, validateUpdateProfile } from "../validators/user.validator";
 
@@ -13,6 +13,7 @@ router.get("/me", authMiddleware(UserRole.USER), userController.me);
 router.patch("/me", authMiddleware(UserRole.USER), validateUpdateProfile, userController.edit);
 //[PATCH] CHANGE PASSWORD: /api/v1/users/me/change-password
 router.patch("/me/change-password", authMiddleware(UserRole.USER), validateChangePassword, userController.changePassword);
+
 
 
 // --- ADMIN ---

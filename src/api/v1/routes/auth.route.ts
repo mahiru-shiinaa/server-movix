@@ -6,6 +6,7 @@ import { validateForgotPassword, validateLogin, validateRegister, validateResetP
 
 // middlewares/otpLimiter.ts
 import rateLimit from "express-rate-limit";
+import { optionalAuthMiddleware } from "../../../middlewares/auth.middleware";
 
 //set thời gian giãn cách gửi request
 export const otpLimiterByEmail = rateLimit({
@@ -47,6 +48,9 @@ router.post("/password/forgot", validateForgotPassword, otpLimiterByEmail, authC
 router.post("/password/otp", authController.otp);
 //[POST] RESET PASSWORD: /api/v1/auth/password/reset
 router.post("/password/reset", validateResetPassword, authController.resetPassword);
+
+//--- CHECK LOGIN --
+router.get("/me", optionalAuthMiddleware, authController.checkLogin);
 
 
 export default router;

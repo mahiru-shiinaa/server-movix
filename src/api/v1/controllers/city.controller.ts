@@ -17,3 +17,19 @@ export const index = async (req: Request, res: Response): Promise<void> => {
     return;
   }
 }
+
+//[GET] /api/v1/cities/:slug
+export const show = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const city = await City.findById(req.params.slug);
+    if (!city) {
+      res.status(404).json({ message: "Không tìm thấy tinh" });
+      return;
+    }
+    res.json(city);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "Lỗi server" });
+    return;
+  }
+}

@@ -29,7 +29,7 @@ const filmSchema = new Schema<IFilmDocument>(
     ageRating: String,
     trailer: String,
     thumbnail: { type: String, required: true },
-    language: { type: String, required: true },
+    filmLanguage: { type: String, required: true },
     subtitles: { type: String, required: true },
     description: { type: String, required: true, trim: true },
     // Slug rất quan trọng cho SEO và URL, nên là duy nhất và viết thường
@@ -63,7 +63,8 @@ const filmSchema = new Schema<IFilmDocument>(
 
 // Tối ưu hóa truy vấn bằng cách tạo index cho các trường hay được tìm kiếm
 filmSchema.index({ title: 'text', slug: 1 }); // Index cho tìm kiếm text trên title và truy vấn nhanh theo slug
-
+filmSchema.index({ slug: 1, deleted: 1, status: 1 });
+filmSchema.index({ slug: 1, deleted: 1});
 /**
  * Model cho Film, được biên dịch từ filmSchema.
  * Cung cấp một interface để tương tác với collection 'films' trong database.
@@ -71,6 +72,6 @@ filmSchema.index({ title: 'text', slug: 1 }); // Index cho tìm kiếm text trê
  * - filmSchema: Schema được sử dụng.
  * - "films": Tên của collection trong MongoDB (viết thường, số nhiều).
  */
-const FilmModel = model<IFilmDocument>("Film", filmSchema, "films");
+const Film = model<IFilmDocument>("Film", filmSchema, "films");
 
-export default FilmModel;
+export default Film;

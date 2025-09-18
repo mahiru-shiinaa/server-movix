@@ -473,3 +473,24 @@ export const resetPassword = async (
     res.status(500).json({ message: "Lỗi server" });
   }
 };
+
+export const checkLogin = async (req: Request, res: Response) : Promise<void> => {
+  try {
+    if(!req.user){
+      res.status(400).json({
+        code: 400,
+        message: "Chưa đăng nhập",
+      });
+      return;
+    }
+    res.json({
+      code: 200,
+      message: "Auth hợp lệ",
+      user: req.user,
+    });
+    return;
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "Lỗi server" });
+  }
+};

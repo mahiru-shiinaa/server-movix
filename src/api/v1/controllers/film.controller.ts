@@ -5,56 +5,104 @@ import { CommonStatus } from "../../../types/common.type";
 import { UserRole } from "../../../types/user.type";
 
 
-//[GET] DETAIL: /api/v1/films/:slug
-//[GET] DETAIL: /api/v1/films/:slug
-export const detail = async (req: Request, res: Response): Promise<void> => {
+// [GET] /api/v1/films - Lấy danh sách film
+export const index = async (req: Request, res: Response): Promise<void> => {
   try {
-    const slug = req.params.slug;
-    
-    // Kiểm tra quyền user
+    let query: any = { deleted: false };
+
     const isAdmin = req.user && req.user.role === UserRole.ADMIN;
-    
-    let query: any = { slug };
-    
-    // Nếu không phải admin, chỉ hiển thị film active và chưa bị xóa
     if (!isAdmin) {
-      query = {
-        slug,
-        status: CommonStatus.ACTIVE,
-        deleted: false
-      };
+      query.status = CommonStatus.ACTIVE;
     }
-    
-    const film = await Film.findOne(query).populate({
+
+    const films = await Film.find(query).populate({
       path: "categoryIds",
       select: "title",
     });
-    
-    if (!film) {
-      res.status(404).json({ 
-        message: isAdmin 
-          ? "Không tìm thấy film" 
-          : "Film không tồn tại hoặc chưa được công bố" 
+
+    if (!films || films.length === 0) {
+      res.status(404).json({
+        message: isAdmin
+          ? "Không tìm thấy film nào"
+          : "Không có film nào công khai",
       });
       return;
     }
-    
-    // Admin thấy tất cả thông tin, guest chỉ thấy thông tin công khai
-    let responseData = film.toObject();
-    
 
     res.status(200).json({
       code: 200,
       message: "Thành công",
-      data: responseData
+      data: films,
     });
-    
   } catch (error) {
-    console.error('Film detail error:', error);
-    res.status(500).json({ message: "Lỗi server khi lấy thông tin film" });
+    res.status(500).json({
+      message: "Lỗi server",
+      error,
+    });
   }
 };
 
+
+// [GET] /api/v1/films/:slug - Xem chi tiết (public)
+export const getBySlug = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { slug = "" } = req.params;
+    const film = await Film.findOne({
+      slug: slug,
+      status: CommonStatus.ACTIVE,
+      deleted: false,
+    }).populate({
+      path: "categoryIds",
+      select: "title",
+    });
+
+    if (!film) {
+      res.status(404).json({
+        message: "Film không tồn tại hoặc chưa được công bố",
+      });
+      return;
+    }
+
+    res.status(200).json({
+      code: 200,
+      message: "Thành công",
+      data: film,
+    });
+  } catch (error) {
+    res.status(500).json({
+      message: "Lỗi server",
+      error: error, // ✅ Trả về message lỗi để debug
+    });
+  }
+};
+
+// [GET] /api/v1/films/:id - Lấy chi tiết để edit (admin only)
+export const getById = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+
+    const film = await Film.findOne({
+      _id: id,
+      deleted: false,
+    }).populate({
+      path: "categoryIds",
+      select: "title",
+    });
+
+    if (!film) {
+      res.status(404).json({ message: "Không tìm thấy film" });
+      return;
+    }
+
+    res.status(200).json({
+      code: 200,
+      message: "Thành công",
+      data: film,
+    });
+  } catch (error) {
+    res.status(500).json({ message: "Lỗi server" });
+  }
+};
 
 //[POST] CREATE: /api/v1/films
 export const create = async (req: Request, res: Response): Promise<void> => {
@@ -73,7 +121,7 @@ export const edit = async (req: Request, res: Response): Promise<void> => {
     const id = req.params.id;
     const updateData = req.body as IFilmUpdate;
     const film = await Film.findByIdAndUpdate(id, updateData, { new: true });
-    if(!film) {
+    if (!film) {
       res.status(404).json({ message: "Không tìm thấy film" });
       return;
     }
@@ -88,7 +136,7 @@ export const remove = async (req: Request, res: Response): Promise<void> => {
   try {
     const id = req.params.id;
     const film = await Film.findById(id);
-    if(!film) {
+    if (!film) {
       res.status(404).json({ message: "Không tìm thấy film" });
       return;
     }
@@ -96,10 +144,8 @@ export const remove = async (req: Request, res: Response): Promise<void> => {
     await film.save();
     res.status(200).json({
       message: "Xóa film thành công",
-
     });
   } catch (error) {
     res.status(500).json({ message: "Delete film failed", error });
   }
 };
-

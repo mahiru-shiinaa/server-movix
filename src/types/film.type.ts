@@ -1,4 +1,4 @@
-import { Document, Schema } from "mongoose";
+import {  Schema } from "mongoose";
 import { CommonStatus } from "./common.type"; // Giả sử file common.type.ts nằm cùng cấp
 
 /**
@@ -17,7 +17,7 @@ export interface IFilm {
   ageRating: string; // VD: T16, T18, P
   trailer?: string; // Có thể có hoặc không
   thumbnail: string;
-  language: string;
+  filmLanguage: string;
   subtitles: string;
   description: string;
   slug: string;
