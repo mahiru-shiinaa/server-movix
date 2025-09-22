@@ -1,3 +1,4 @@
+// src/api/v1/models/cinema.model.ts
 import mongoose, { HydratedDocument, Schema, model } from "mongoose";
 import { CommonStatus } from "../../../types/common.type";
 import slug from "mongoose-slug-updater";
@@ -30,15 +31,16 @@ const cinemaSchema = new Schema<ICinemaDocument>(
       type: String,
       required: true,
     },
-    cityId: {
+    // ✅ THAY ĐỔI: từ cityId thành cityIds (mảng)
+    cityIds: [{
       type: Schema.Types.ObjectId,
       ref: "City",
       required: true,
-    },
+    }],
     // Slug rất quan trọng cho SEO và URL, nên là duy nhất và viết thường
     slug: {
       type: String,
-      slug: "title",
+      slug: "name",
       unique: true,
       slugPaddingSize: 4,
     },
@@ -62,10 +64,11 @@ const cinemaSchema = new Schema<ICinemaDocument>(
 
 // Tối ưu hóa truy vấn bằng cách tạo index cho các trường hay được tìm kiếm
 cinemaSchema.index({ name: "text", slug: 1 }); // Index cho tìm kiếm text trên title và truy vấn nhanh theo slug
-cinemaSchema.index({ cityId: 1 }); // Index cho tìm kiếm nhanh theo cityId
+cinemaSchema.index({ cityIds: 1 }); // ✅ THAY ĐỔI: Index cho tìm kiếm nhanh theo cityIds (mảng)
 cinemaSchema.index({ parentId: 1 }); // Index cho tìm kiếm nhanh theo parentId
 cinemaSchema.index({ slug: 1, deleted: 1, status: 1 });
 cinemaSchema.index({ slug: 1, deleted: 1});
+
 const Cinema = model<ICinemaDocument>("Cinema", cinemaSchema, "cinemas");
 
 export default Cinema;

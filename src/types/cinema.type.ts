@@ -1,4 +1,5 @@
-import {  Schema } from "mongoose";
+// src/types/cinema.type.ts
+import { Schema } from "mongoose";
 import { CommonStatus } from "./common.type"; 
 
 /**
@@ -11,7 +12,7 @@ export interface ICinema {
   address: string;
   avatar: string;
   description: string;
-  cityId: Schema.Types.ObjectId; 
+  cityIds: Schema.Types.ObjectId[]; // ✅ THAY ĐỔI: từ cityId thành cityIds (mảng)
   slug: string;
   status: CommonStatus; // Sử dụng enum đã định nghĩa
   deleted: boolean; // Dùng để đánh dấu xóa mềm

@@ -1,0 +1,3616 @@
+# ==================================================
+# Path: E:\HTMLCSS\PROJECT_ONTAP\Project_Movix\server
+# Detected tech: javascript, typescript
+# ==================================================
+
+## DIRECTORY STRUCTURE
+```
+server/
+├── .git/
+├── dist/
+├── node_modules/
+├── src/
+│   ├── api/
+│   │   └── v1/
+│   │       ├── controllers/
+│   │       │   ├── auth.controller.ts
+│   │       │   ├── category.controller.ts
+│   │       │   ├── cinema.controller.ts
+│   │       │   ├── city.controller.ts
+│   │       │   ├── comboFood.controller.ts
+│   │       │   ├── film.controller.ts
+│   │       │   ├── upload.controller.ts
+│   │       │   └── user.controller.ts
+│   │       ├── models/
+│   │       │   ├── category.model.ts
+│   │       │   ├── cinema.model.ts
+│   │       │   ├── city.model.ts
+│   │       │   ├── comboFood.model.ts
+│   │       │   ├── comment.model.ts
+│   │       │   ├── film.model.ts
+│   │       │   ├── order.model.ts
+│   │       │   ├── otp.model.ts
+│   │       │   ├── promotion.model.ts
+│   │       │   ├── resetToken.model.ts
+│   │       │   ├── room.model.ts
+│   │       │   ├── showtime.model.ts
+│   │       │   └── user.model.ts
+│   │       ├── routes/
+│   │       │   ├── auth.route.ts
+│   │       │   ├── category.route.ts
+│   │       │   ├── cinema.route.ts
+│   │       │   ├── city.route.ts
+│   │       │   ├── comboFood.route.ts
+│   │       │   ├── film.route.ts
+│   │       │   ├── index.route.ts
+│   │       │   ├── upload.route.ts
+│   │       │   └── user.route.ts
+│   │       └── validators/
+│   │           ├── auth.validator.ts
+│   │           ├── cinema.validator.ts
+│   │           ├── common.validator.ts
+│   │           ├── film.validator.ts
+│   │           └── user.validator.ts
+│   ├── config/
+│   │   └── database.ts
+│   ├── helpers/
+│   │   ├── generate.ts
+│   │   ├── jwt.ts
+│   │   ├── password.ts
+│   │   ├── sendMail.ts
+│   │   └── uploadCloudinary.ts
+│   ├── middlewares/
+│   │   ├── auth.middleware.ts
+│   │   └── uploadCloud.middlewares.ts
+│   ├── types/
+│   │   ├── express/
+│   │   │   └── index.d.ts
+│   │   ├── cinema.type.ts
+│   │   ├── common.type.ts
+│   │   ├── film.type.ts
+│   │   ├── mongoose-slug-updater.d.ts
+│   │   └── user.type.ts
+│   └── index.ts
+├── .env
+├── .gitignore
+├── package-lock.json
+├── package.json
+├── source_dump.txt
+└── tsconfig.json
+```
+
+## FILE CONTENTS
+
+### src\index.ts
+```ts
+import express, { Express} from "express";
+import dotenv from "dotenv";
+// Cấu hình .env
+dotenv.config();
+import cors from "cors";
+import cookieParser from "cookie-parser";
+import * as database from "./config/database";
+import mainV1Routes from "./api/v1/routes/index.route";
+
+// Khởi động app và thiết lập port
+const app: Express = express();
+const port: number | string = process.env.PORT || 3000;
+
+// Kết nối Database
+database.connect();
+
+// Middleware để đọc body từ client, không cần body-parser nâng cao
+app.use(express.json()); // Đọc JSON từ client (axios/fetch gửi lên)
+app.use(express.urlencoded({ extended: true })); // Nếu dùng form HTML gửi lên
+
+//  Cho phép CORS
+app.use(
+  cors({
+    origin: ["http://localhost:3000"], // ✅ Chỉ cho phép React app
+    credentials: true, //Cho phéo gửi request với cookie, phải có
+  })
+); //  cấu hình mặc định: cho phép tất cả origin
+
+// Dùng để check cookie đăng nhập
+app.use(cookieParser());
+
+// Liên kết index API
+mainV1Routes(app);
+app.listen(port, () => {
+  console.log(`App listening on port ${port}`);
+});
+```
+
+### src\api\v1\controllers\auth.controller.ts
+```ts
+import { Request, Response } from "express";
+import User from "../models/user.model";
+// ✅ THAY ĐỔI: Import bcrypt và jwt helpers thay vì md5
+// import md5 from "md5"; // ❌ Xóa md5
+import { hashPassword, comparePassword } from "../../../helpers/password";
+import {
+  generateAccessToken,
+  generateRefreshToken,
+  ITokenPayload,
+} from "../../../helpers/jwt";
+import * as generateHelper from "../../../helpers/generate";
+import * as sendMailHelper from "../../../helpers/sendMail";
+import Otp from "../models/otp.model";
+import { IUser, UserRole, UserStatus } from "../../../types/user.type";
+import ResetToken from "../models/resetToken.model";
+
+//[POST] /api/v1/auth/register
+export const register = async (req: Request, res: Response): Promise<void> => {
+  try {
+    //1. Lấy thông tin người dùng nhập vào
+    const email: string = req.body.email;
+    const username: string = req.body.username;
+    const password: string = req.body.password;
+
+    //2. Kiểm tra tồn tại
+    const checkUser = await User.findOne({
+      $or: [{ username: username }, { email: email }],
+    });
+
+    if (checkUser) {
+      if (checkUser.email === email) {
+        res.status(400).json({ message: "Email đã được sử dụng" });
+        return;
+      }
+      if (checkUser.username === username) {
+        res.status(400).json({ message: "Tên đăng nhập đã được sử dụng" });
+        return;
+      }
+    }
+
+    //3. ✅ THAY ĐỔI: Hash password bằng bcrypt và không lưu token nữa
+    const hashedPassword = await hashPassword(password);
+
+    const infoUser: Partial<IUser> = {
+      email,
+      username,
+      password: hashedPassword, // ✅ Lưu password đã hash
+      // token, // ❌ Không cần token nữa
+      role: UserRole.USER,
+      status: UserStatus.PENDING,
+    };
+    const user = new User(infoUser);
+    await user.save();
+
+    //4. Tạo otp và gửi mail;
+    const otpRandom = generateHelper.generateRandomNumber();
+    const otbObject = {
+      email: email,
+      otp: otpRandom,
+      type: "register",
+      expiresAt: Date.now(),
+    };
+    const otp = new Otp(otbObject);
+    await otp.save();
+    const subject = "Movix - Mã OTP xác minh tài khoản";
+    sendMailHelper.sendMail(email, subject, otpRandom);
+    res.json({ code: 200, message: "OTP đã được gửi qua email của bạn" });
+    return;
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "Lỗi server" });
+  }
+};
+
+//[POST] /api/v1/auth/register/check-email
+export const checkEmailOtp = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  try {
+    //1. Nhận thông tin từ client
+    const { email, otp } = req.body;
+    //2. Kiem tra otp có nhập hay không
+    if (!otp) {
+      res.status(400).json({ message: "Vui lòng nhập otp" });
+      return;
+    }
+    //3. Kiem tra otp có tồn tại hay không
+    const otpCheck = await Otp.findOne({
+      email: email,
+      otp: otp,
+      type: "register",
+    });
+    //4. Nếu không tồn tại thông báo lỗi
+    if (!otpCheck) {
+      res.status(400).json({ message: "Không tìm thấy otp" });
+      return;
+    }
+    //5. Kiem tra email cua nguoi dung co ton tai hay khong
+    const user = await User.findOne({ email: email, deleted: false });
+    if (!user) {
+      res.status(400).json({ message: "Tài khoản không tồn tại" });
+      return;
+    }
+
+    //6. ✅ THAY ĐỔI: Cập nhật status và tạo JWT tokens
+    user.status = UserStatus.ACTIVE;
+
+    // Tạo JWT tokens
+    const tokenPayload: ITokenPayload = {
+      userId: user._id.toString(),
+      username: user.username,
+      email: user.email,
+      role: user.role,
+    };
+
+    const accessToken = generateAccessToken(tokenPayload);
+    const refreshToken = generateRefreshToken(user._id.toString());
+
+    // Lưu refresh token vào database
+    user.refreshToken = refreshToken;
+    await user.save();
+
+    // Xóa otp đi
+    await Otp.findOneAndDelete({ email: email, type: "register" });
+
+    // ✅ Set cookies với JWT tokens
+    res.cookie("accessToken", accessToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+      maxAge: 15 * 60 * 1000, // 15 phút
+    });
+
+    res.cookie("refreshToken", refreshToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 ngày
+    });
+
+    res.json({ code: 200, message: "Xác minh email và đăng nhập thành công" });
+    return;
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "Lỗi server" });
+  }
+};
+
+//[POST] /api/v1/auth/register/cancel-register
+export const cancelRegister = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  try {
+    const { email } = req.body;
+    const user = await User.findOne({
+      email: email,
+      status: UserStatus.PENDING,
+      deleted: false,
+    });
+    if (!user) {
+      res
+        .status(400)
+        .json({ message: "Tài khoản chưa được lưu trên hệ thống!" });
+      return;
+    }
+    await User.findOneAndDelete({ email: email });
+    await Otp.findOneAndDelete({ email: email, type: "register" });
+    res.json({ code: 200, message: "Hủy đăng ký thành công" });
+    return;
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "Lỗi server" });
+  }
+};
+
+//[POST] /api/v1/auth/resendOtp
+export const resendOtp = async (req: Request, res: Response): Promise<void> => {
+  try {
+    //1. Nhận email và type otp
+    const { email, type } = req.body;
+    //2. Tìm xem user có tồn tại hay không
+    const user = await User.findOne({ email: email, deleted: false });
+    //3. Nếu không tìm thấy user thì báo lỗi
+    if (!user) {
+      res.status(400).json({ message: "Tài khoản không tồn tại!" });
+      return;
+    }
+    //4. Nếu type là register mà tài khoản đã được xác minh thì báo lỗi
+    if (type === "register") {
+      if (user.status === UserStatus.ACTIVE) {
+        res.status(400).json({ message: "Tài khoản đã được xác minh!" });
+        return;
+      }
+      if (user.status === UserStatus.BLOCKED) {
+        res.status(400).json({ message: "Tài khoản đã bị khóa" });
+        return;
+      }
+    }
+    //5. Tạo otp và gửi mail (2 trường hợp check email là register và forgot password)
+    const otpRandom = generateHelper.generateRandomNumber();
+    await Otp.findOneAndDelete({ email: email, type: type });
+    const otbObject = {
+      email: email,
+      otp: otpRandom,
+      type: type,
+      expiresAt: Date.now(),
+    };
+    const otp = new Otp(otbObject);
+    await otp.save();
+    const subject = "Movix - Mã OTP xác minh tài khoản";
+    sendMailHelper.sendMail(email, subject, otpRandom);
+    res.json({ code: 200, message: "OTP đã được gửi qua email của bạn" });
+    return;
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "Loi server" });
+  }
+};
+
+// [POST] /api/v1/auth/login
+export const login = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { identifier, password } = req.body; // dùng identifier thay vì email
+    const user = await User.findOne({
+      $or: [{ email: identifier }, { username: identifier }],
+      deleted: false,
+    });
+
+    if (!user) {
+      res.status(400).json({ message: "Tên đăng nhập hoặc email không đúng!" });
+      return;
+    }
+
+    if (user.status === UserStatus.PENDING) {
+      res.status(400).json({ message: "Tài khoản chưa được xác minh!" });
+      return;
+    }
+
+    if (user.status === UserStatus.BLOCKED) {
+      res.status(400).json({ message: "Tài khoản đã bị khóa!" });
+      return;
+    }
+
+    // ✅ THAY ĐỔI: Dùng bcrypt để so sánh password
+    const isMatch = await comparePassword(password, user.password);
+    if (!isMatch) {
+      res.status(400).json({ message: "Mật khẩu không đúng!" });
+      return;
+    }
+
+    // ✅ Tạo JWT tokens
+    const tokenPayload: ITokenPayload = {
+      userId: user._id.toString(),
+      username: user.username,
+      email: user.email,
+      role: user.role,
+    };
+
+    const accessToken = generateAccessToken(tokenPayload);
+    const refreshToken = generateRefreshToken(user._id.toString());
+
+    // Lưu refresh token mới vào database (revoke token cũ nếu có)
+    user.refreshToken = refreshToken;
+    await user.save();
+
+    // ✅ Set cookies với JWT tokens
+    res.cookie("accessToken", accessToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+      maxAge: 15 * 60 * 1000, // 15 phút
+    });
+
+    res.cookie("refreshToken", refreshToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 ngày
+    });
+
+    res.json({ code: 200, message: "Đăng nhập thành công" });
+    return;
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "Lỗi server" });
+  }
+};
+
+//[POST] /api/v1/auth/logout
+export const logout = async (req: Request, res: Response): Promise<void> => {
+  try {
+    // ✅ THAY ĐỔI: Xóa refresh token khỏi database để revoke session
+    const refreshToken = req.cookies.refreshToken;
+    if (refreshToken) {
+      await User.findOneAndUpdate(
+        { refreshToken: refreshToken },
+        { $unset: { refreshToken: 1 } } // Xóa trường refreshToken
+      );
+    }
+
+    // Xóa cả 2 cookies
+    res.clearCookie("accessToken");
+    res.clearCookie("refreshToken");
+    res.json({ code: 200, message: "Đăng xuất thành công" });
+    return;
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "Loi server" });
+  }
+};
+
+//[POST] /api/v1/auth/password/forgot
+export const forgotPassword = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  try {
+    //1. Kiểm tra email
+    const email: string = req.body.email;
+    if (!email) {
+      res.status(400).json({ message: "Vui lý nhập email" });
+      return;
+    }
+    const user = await User.findOne({ email: email, deleted: false });
+    // 2. Kiểm tra user
+    if (!user) {
+      res.status(400).json({ message: "Tài khoản không tồn tại" });
+      return;
+    }
+    if (user.status === UserStatus.PENDING) {
+      res.status(400).json({ message: "Tài khoản chưa được xác minh" });
+      return;
+    }
+    if (user.status === UserStatus.BLOCKED) {
+      res.status(400).json({ message: "Tài khoản được bị khóa" });
+      return;
+    }
+    //3. Tạo otp và gửi otp với type = forgot về mail
+    const otpRandom = generateHelper.generateRandomNumber();
+    const otbObject = {
+      email: email,
+      otp: otpRandom,
+      type: "forgot",
+      expiresAt: Date.now(),
+    };
+    const otp = new Otp(otbObject);
+    await otp.save();
+    const subject = "Movix - Mã OTP xác minh tài khoản";
+    sendMailHelper.sendMail(email, subject, otpRandom);
+    res.json({ code: 200, message: "OTP đã được gửi qua email của bạn" });
+    return;
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "Lỗi server" });
+  }
+};
+
+//[POST] /api/v1/auth/password/otp
+export const otp = async (req: Request, res: Response): Promise<void> => {
+  try {
+    //1. Kiem tra otp, và tài khoản
+    const { email, otp } = req.body;
+    const otpCheck = await Otp.findOne({
+      email: email,
+      otp: otp,
+      type: "forgot",
+    });
+    if (!otpCheck) {
+      res.status(400).json({ message: "Không tìm thấy otp" });
+      return;
+    }
+    const user = await User.findOne({ email: email, deleted: false });
+    if (!user) {
+      res.status(400).json({ message: "Tài khoản không tồn tại" });
+      return;
+    }
+    //2. Tạo reset token chuẩn bị cho check reset password
+    const tokenReset = generateHelper.generateToken();
+    const objectResetToken = {
+      email: email,
+      expiresAt: Date.now(),
+      resetToken: tokenReset,
+    };
+    const resetToken = new ResetToken(objectResetToken);
+    await resetToken.save();
+    await Otp.findOneAndDelete({ email: email });
+    res.json({
+      code: 200,
+      message: "Xác minh thành công, vui lòng đổi mật khẩu trong vòng 5 phút!",
+      resetToken: resetToken.resetToken,
+    });
+    return;
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "Lỗi server" });
+  }
+};
+
+//[POST] api/v1/auth/password/reset
+export const resetPassword = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  try {
+    const { email, resetToken, newPassword } = req.body as {
+      email: string;
+      resetToken: string;
+      newPassword: string;
+    };
+    const resetTokenCheck = await ResetToken.findOne({
+      email: email,
+      resetToken: resetToken,
+    });
+    if (!resetTokenCheck) {
+      res.status(400).json({
+        message: "Dữ liệu check reset password lỗi, vui lòng làm lại từ đầu",
+      });
+      return;
+    }
+    const user = await User.findOne({ email: email, deleted: false });
+    if (!user) {
+      res.status(400).json({ message: "Tài khoản không tồn tại" });
+      return;
+    }
+    if (user.status === UserStatus.BLOCKED) {
+      res.status(400).json({ message: "Tài khoản đã bị khóa" });
+      return;
+    }
+    const isSamePassword = await comparePassword(newPassword, user.password);
+    if (isSamePassword) {
+      res
+        .status(400)
+        .json({ message: "Mật khẩu mới không được giống mật khẩu cũ" });
+      return;
+    }
+    // Cập nhập Password mới
+    user.password = await hashPassword(newPassword);
+
+    // ✅ Tạo JWT tokens
+    const tokenPayload: ITokenPayload = {
+      userId: user._id.toString(),
+      username: user.username,
+      email: user.email,
+      role: user.role,
+    };
+    const accessToken = generateAccessToken(tokenPayload);
+    const refreshToken = generateRefreshToken(user._id.toString());
+
+    // Lưu refresh token mới vào database (revoke token cũ nếu có)
+    user.refreshToken = refreshToken;
+    await user.save();
+    await ResetToken.findOneAndDelete({ email: email });
+    // ✅ Set cookies với JWT tokens
+    res.cookie("accessToken", accessToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+      maxAge: 15 * 60 * 1000, // 15 phút
+    });
+
+    res.cookie("refreshToken", refreshToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 ngày
+    });
+    res.json({ code: 200, message: "Đổi mật khẩu thành công" });
+    return;
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "Lỗi server" });
+  }
+};
+
+export const checkLogin = async (req: Request, res: Response) : Promise<void> => {
+  try {
+    if(!req.user){
+      res.status(400).json({
+        code: 400,
+        message: "Chưa đăng nhập",
+      });
+      return;
+    }
+    res.json({
+      code: 200,
+      message: "Auth hợp lệ",
+      user: req.user,
+    });
+    return;
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "Lỗi server" });
+  }
+};
+
+```
+
+### src\api\v1\controllers\category.controller.ts
+```ts
+import Category from "../models/category.model";
+import { Request, Response } from "express";
+
+// [GET] /api/v1/categories
+export const index = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const categories = await Category.find();
+    if (!categories) {
+      res.status(404).json({ message: "Không tìm thấy danh mục" });
+      return;
+    }
+    res.json(categories);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "Lỗi server" });
+    return;
+  }
+};
+
+```
+
+### src\api\v1\controllers\cinema.controller.ts
+```ts
+import { ICinemaCreate, ICinemaUpdate } from "../../../types/cinema.type";
+import { Request, Response } from "express";
+import Cinema from "../models/cinema.model";
+import { UserRole } from "../../../types/user.type";
+import { CommonStatus } from "../../../types/common.type";
+
+//[GET] LIST CINEMA: /api/v1/cinemas
+export const index = async (req: Request, res: Response): Promise<void> => {
+  try {
+    // Kiểm tra quyền user
+    const isAdmin = req.user && req.user.role === UserRole.ADMIN;
+
+    let query: any = { deleted: false };
+
+    // Nếu không phải admin, chỉ hiển thị rạp chiếu active và chưa bị xóa
+    if (!isAdmin) {
+      query = {
+        status: CommonStatus.ACTIVE,
+        deleted: false,
+      };
+    }
+
+    const cinemas = await Cinema.find(query);
+    res.status(200).json(cinemas);
+  } catch (error) {
+    res.status(500).json({ message: "Get cinemas failed", error });
+    return;
+  }
+};
+
+//[GET] LIST FILM IN CINEMA: /api/v1/cinemas/:id/films → danh sách phim trong 1 rạp.
+
+// [GET] LIST SHOWTIME IN CINEMA: /api/v1/cinemas/:id/showTimes → lịch chiếu trong rạp.
+
+//[GET] DETAIL BY SLUG (PUBLIC): /api/v1/cinemas/slug/:slug
+// Chỉ trả về cinema có status active và chưa bị xóa
+export const getBySlug = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const slug = req.params.slug;
+    
+    const cinema = await Cinema.findOne({
+      slug,
+      status: CommonStatus.ACTIVE,
+      deleted: false,
+    })
+    .populate({
+      path: "cityId",
+      select: "name",
+    })
+    .populate({
+      path: "parentId",
+      select: "name",
+    });
+
+    if (!cinema) {  
+      res.status(404).json({
+        message: "Rạp chiếu không tồn tại hoặc chưa được công bố",
+      });
+      return;
+    }
+    
+    res.status(200).json(cinema);
+  } catch (error) {
+    res.status(500).json({ message: "Get cinema failed", error });
+    return;
+  }
+};
+
+//[GET] DETAIL BY ID (ADMIN): /api/v1/cinemas/:id
+// Trả về cinema cho admin (chỉ cần chưa bị xóa)
+export const getById = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const id = req.params.id;
+    
+    const cinema = await Cinema.findOne({
+      _id: id,
+      deleted: false,
+    })
+    .populate({
+      path: "cityId",
+      select: "name",
+    })
+    .populate({
+      path: "parentId",
+      select: "name",
+    });
+
+    if (!cinema) {  
+      res.status(404).json({
+        message: "Không tìm thấy rạp chiếu",
+      });
+      return;
+    }
+    
+    res.status(200).json({
+      code: 200,
+      message: "Thành công",
+      data: cinema,
+    });
+  } catch (error) {
+    res.status(500).json({ message: "Get cinema failed", error });
+    return;
+  }
+};
+
+//[POST] CREATE CINEMA: /api/v1/cinemas
+export const create = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const createData = req.body as ICinemaCreate;
+    const cinema = await Cinema.create(createData);
+    res.status(200).json(cinema);
+  } catch (error) {
+    res.status(500).json({ message: "Create cinema failed", error });
+    return;
+  }
+};
+
+//[PATCH] EDIT CINEMA: /api/v1/cinemas/:id
+export const edit = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const id = req.params.id;
+    const updateData = req.body as ICinemaUpdate;
+    const cinema = await Cinema.findByIdAndUpdate(id, updateData, {
+      new: true,
+    });
+    if (!cinema) {
+      res.status(404).json({ message: "Không tìm thấy rạp chiếu" });
+      return;
+    }
+    res.status(200).json(cinema);
+  } catch (error) {
+    res.status(500).json({ message: "Update cinema failed", error });
+    return;
+  }
+};
+
+//[DELETE] DELETE CINEMA: /api/v1/cinemas/:id
+export const remove = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const id = req.params.id;
+    const cinema = await Cinema.findByIdAndDelete(id);
+    if (!cinema) {
+      res.status(404).json({ message: "Không tìm thấy rạp chiếu" });
+      return;
+    }
+    res.status(200).json({ message: "Xóa rạp chiếu thành công" });
+  } catch (error) {
+    res.status(500).json({ message: "Delete cinema failed", error });
+    return;
+  }
+};
+
+```
+
+### src\api\v1\controllers\city.controller.ts
+```ts
+
+import { Request, Response } from "express";
+import City from "../models/city.model";
+
+//[GET] /api/v1/cities
+export const index = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const cities = await City.find();
+    if (!cities) {
+      res.status(404).json({ message: "Không tìm thấy thành phố" });
+      return;
+    }
+    res.json(cities);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "Lỗi server" });
+    return;
+  }
+}
+
+//[GET] /api/v1/cities/:slug
+export const show = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const city = await City.findById(req.params.slug);
+    if (!city) {
+      res.status(404).json({ message: "Không tìm thấy tinh" });
+      return;
+    }
+    res.json(city);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "Lỗi server" });
+    return;
+  }
+}
+```
+
+### src\api\v1\controllers\comboFood.controller.ts
+```ts
+
+import { Request, Response } from "express";
+import ComboFood from "../models/comboFood.model";
+
+//[GET] /api/v1/combofoods
+export const index = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const combofoods = await ComboFood.find();
+    if (!combofoods) {
+      res.status(404).json({ message: "Không tìm thấy combofoods" });
+      return;
+    }
+    res.json(combofoods);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "Lỗi server" });
+    return;
+  }
+}
+```
+
+### src\api\v1\controllers\film.controller.ts
+```ts
+import { Request, Response } from "express";
+import Film from "../models/film.model";
+import { IFilmCreate, IFilmUpdate } from "../../../types/film.type";
+import { CommonStatus } from "../../../types/common.type";
+import { UserRole } from "../../../types/user.type";
+
+
+// [GET] /api/v1/films - Lấy danh sách film
+export const index = async (req: Request, res: Response): Promise<void> => {
+  try {
+    let query: any = { deleted: false };
+
+    const isAdmin = req.user && req.user.role === UserRole.ADMIN;
+    if (!isAdmin) {
+      query.status = CommonStatus.ACTIVE;
+    }
+
+    const films = await Film.find(query).populate({
+      path: "categoryIds",
+      select: "title",
+    });
+
+    if (!films || films.length === 0) {
+      res.status(404).json({
+        message: isAdmin
+          ? "Không tìm thấy film nào"
+          : "Không có film nào công khai",
+      });
+      return;
+    }
+
+    res.status(200).json({
+      code: 200,
+      message: "Thành công",
+      data: films,
+    });
+  } catch (error) {
+    res.status(500).json({
+      message: "Lỗi server",
+      error,
+    });
+  }
+};
+
+
+// [GET] /api/v1/films/:slug - Xem chi tiết (public)
+export const getBySlug = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { slug = "" } = req.params;
+    const film = await Film.findOne({
+      slug: slug,
+      status: CommonStatus.ACTIVE,
+      deleted: false,
+    }).populate({
+      path: "categoryIds",
+      select: "title",
+    });
+
+    if (!film) {
+      res.status(404).json({
+        message: "Film không tồn tại hoặc chưa được công bố",
+      });
+      return;
+    }
+
+    res.status(200).json({
+      code: 200,
+      message: "Thành công",
+      data: film,
+    });
+  } catch (error) {
+    res.status(500).json({
+      message: "Lỗi server",
+      error: error, // ✅ Trả về message lỗi để debug
+    });
+  }
+};
+
+// [GET] /api/v1/films/:id - Lấy chi tiết để edit (admin only)
+export const getById = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+
+    const film = await Film.findOne({
+      _id: id,
+      deleted: false,
+    }).populate({
+      path: "categoryIds",
+      select: "title",
+    });
+
+    if (!film) {
+      res.status(404).json({ message: "Không tìm thấy film" });
+      return;
+    }
+
+    res.status(200).json({
+      code: 200,
+      message: "Thành công",
+      data: film,
+    });
+  } catch (error) {
+    res.status(500).json({ message: "Lỗi server" });
+  }
+};
+
+//[POST] CREATE: /api/v1/films
+export const create = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const createData = req.body as IFilmCreate;
+    const film = await Film.create(createData);
+    res.status(200).json(film); // không cần return
+  } catch (error) {
+    res.status(500).json({ message: "Create film failed", error });
+  }
+};
+
+//[PATCH] EDIT: /api/v1/films/:id
+export const edit = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const id = req.params.id;
+    const updateData = req.body as IFilmUpdate;
+    const film = await Film.findByIdAndUpdate(id, updateData, { new: true });
+    if (!film) {
+      res.status(404).json({ message: "Không tìm thấy film" });
+      return;
+    }
+    res.status(200).json(film);
+  } catch (error) {
+    res.status(500).json({ message: "Update film failed", error });
+  }
+};
+
+//[DELETE] DELETE: /api/v1/films/:id
+export const remove = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const id = req.params.id;
+    const film = await Film.findById(id);
+    if (!film) {
+      res.status(404).json({ message: "Không tìm thấy film" });
+      return;
+    }
+    film.deleted = true;
+    await film.save();
+    res.status(200).json({
+      message: "Xóa film thành công",
+    });
+  } catch (error) {
+    res.status(500).json({ message: "Delete film failed", error });
+  }
+};
+
+```
+
+### src\api\v1\controllers\upload.controller.ts
+```ts
+ 
+ import { Request, Response } from "express";
+import uploadCloudinary from "../../../helpers/uploadCloudinary";
+
+ export const index = async (req: Request, res: Response): Promise<void> => {
+  try {
+    console.log(req.body);
+    res.json({
+      location: req.body.file
+    });
+  } catch (error) {
+    console.log('error', error);
+  }
+}
+
+export const uploadImage = async (req: Request, res: Response) => {
+  try {
+    const file = req.file;
+
+    if (!file) {
+      return res.status(400).json({ error: "No file provided" });
+    }
+
+    const imageUrl = await uploadCloudinary(file.buffer);
+
+    return res.json({ url: imageUrl });
+  } catch (error) {
+    console.error("Upload error:", error);
+    res.status(500).json({ error: "Image upload failed" });
+  }
+};
+```
+
+### src\api\v1\controllers\user.controller.ts
+```ts
+import { Request, Response } from "express";
+import User from "../models/user.model";
+// ✅ THAY ĐỔI: Import bcrypt thay vì md5
+// import md5 from "md5"; // ❌ Xóa md5
+import { hashPassword, comparePassword } from "../../../helpers/password";
+
+import {  UserStatus } from "../../../types/user.type";
+
+// --- ADMIN ---
+//[GET] LIST: /api/v1/users
+export const index = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const users = await User.find({ deleted: false }).select("-password");
+    res.json({ code: 200, message: "Thành công", users: users });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "Loi server" });
+  }
+};
+
+//[GET] DETAIL: /api/v1/users/:id
+export const detail = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const id : string = req.params.id;
+    const user = await User.findById(id).select("-password");
+    if(!user) {
+      res.status(404).json({ message: "Không tìm thấy user" });
+      return;
+    }
+    res.json({ code: 200, message: "Thành công", user: user });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "Loi server" });
+  }
+};
+
+// --- USER ---
+//[GET] DETAIL: /api/v1/users/me
+export const me = async (req: Request, res: Response): Promise<void> => {
+  try {
+    res.json({ code: 200, message: "Thành công", user: req.user });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "Loi server" });
+  }
+};
+
+// [PATCH] EDIT: /api/v1/users/me
+export const edit = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const user = await User.findOneAndUpdate(
+      { _id: req.user._id },
+      req.body,
+      { new: true }
+    );
+    res.json({ code: 200, message: "Cập nhật thành công", user: user });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "Loi server" });
+  }
+};
+
+// Hoàn thiện sau
+// //[DELETE] /api/v1/users/me
+// export const remove = async (req: Request, res: Response): Promise<void> => {
+//   try {
+//     await User.findByIdAndDelete(req.user._id);
+//     res.json({ code: 200, message: "Xoa tai khoan thanh cong" });
+//   } catch (error) {
+//     console.error(error);
+//     res.status(500).json({ message: "Loi server" });
+//   }
+// }
+
+//[PATCH] /api/v1/users/me/change-password
+export const changePassword = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { oldPassword, newPassword } = req.body;
+    const user = await User.findOne({ _id: req.user._id, deleted: false, status: UserStatus.ACTIVE });
+    
+    if(!user) {
+      res.status(400).json({ code: 400, message: "Tài khoản không tồn tại!" });
+      return ;
+    }
+    
+    // ✅ THAY ĐỔI: Dùng bcrypt để so sánh password cũ
+    const isOldPasswordCorrect = await comparePassword(oldPassword, user.password);
+    if (!isOldPasswordCorrect) {
+      res.status(400).json({ code: 400, message: "Mật khẩu cũ không chính xác!" });
+      return ;
+    }
+    
+    // ✅ Kiểm tra password mới có giống password cũ không
+    const isSamePassword = await comparePassword(newPassword, user.password);
+    if (isSamePassword) {
+      res.status(400).json({ code: 400, message: "Mật khẩu mới không được giống mật khẩu cũ!" });
+      return ;
+    }
+    
+    // ✅ Hash password mới và lưu vào database
+    user.password = await hashPassword(newPassword);
+    await user.save();
+    
+    res.status(200).json({ code: 200, message: "Đổi mật khẩu thành công!" });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "Loi server" });
+  }
+};
+```
+
+### src\api\v1\models\category.model.ts
+```ts
+import { Document, Schema, model } from "mongoose";
+
+// Interface cho Category
+export interface ICategory extends Document {
+  title: string;
+}
+
+// Schema cho Category
+const categorySchema = new Schema<ICategory>(
+  {
+    title: { type: String, required: true },
+  },
+  {
+    timestamps: true, // Tự động thêm createdAt và updatedAt
+  }
+);
+
+// Model với type
+const Category = model<ICategory>("Category", categorySchema, "categories");
+
+export default Category;
+
+```
+
+### src\api\v1\models\cinema.model.ts
+```ts
+import mongoose, { HydratedDocument, Schema, model } from "mongoose";
+import { CommonStatus } from "../../../types/common.type";
+import slug from "mongoose-slug-updater";
+import { ICinema } from "../../../types/cinema.type";
+
+// Kích hoạt plugin slug
+mongoose.plugin(slug);
+
+export type ICinemaDocument = HydratedDocument<ICinema>;
+
+const cinemaSchema = new Schema<ICinemaDocument>(
+  {
+    name: {
+      type: String,
+      required: true,
+    },
+    parentId: {
+      type: Schema.Types.ObjectId,
+      ref: "Cinema",
+    },
+    address: {
+      type: String,
+      required: true,
+    },
+    avatar: {
+      type: String,
+      required: true,
+    },
+    description: {
+      type: String,
+      required: true,
+    },
+    cityId: {
+      type: Schema.Types.ObjectId,
+      ref: "City",
+      required: true,
+    },
+    // Slug rất quan trọng cho SEO và URL, nên là duy nhất và viết thường
+    slug: {
+      type: String,
+      slug: "title",
+      unique: true,
+      slugPaddingSize: 4,
+    },
+    status: {
+      type: String,
+      enum: Object.values(CommonStatus),
+      required: true,
+      default: CommonStatus.INACTIVE,
+    },
+    // Dùng cho soft-delete
+    deleted: {
+      type: Boolean,
+      default: false,
+    },
+  },
+  {
+    timestamps: true, // Tự động quản lý createdAt và updatedAt
+    versionKey: false, // Tắt trường __v không cần thiết
+  }
+);
+
+// Tối ưu hóa truy vấn bằng cách tạo index cho các trường hay được tìm kiếm
+cinemaSchema.index({ name: "text", slug: 1 }); // Index cho tìm kiếm text trên title và truy vấn nhanh theo slug
+cinemaSchema.index({ cityId: 1 }); // Index cho tìm kiếm nhanh theo cityId
+cinemaSchema.index({ parentId: 1 }); // Index cho tìm kiếm nhanh theo parentId
+cinemaSchema.index({ slug: 1, deleted: 1, status: 1 });
+cinemaSchema.index({ slug: 1, deleted: 1});
+const Cinema = model<ICinemaDocument>("Cinema", cinemaSchema, "cinemas");
+
+export default Cinema;
+
+```
+
+### src\api\v1\models\city.model.ts
+```ts
+import mongoose, { Document, Schema, model } from "mongoose";
+import slug from "mongoose-slug-updater";
+
+// Kích hoạt plugin slug
+
+mongoose.plugin(slug);
+
+// Interface cho Category
+export interface ICity extends Document {
+  name: string;
+  slug: string;
+}
+
+// Schema cho City
+const citySchema = new Schema<ICity>(
+  {
+    name: { type: String, required: true },
+    slug: {
+      type: String,
+      slug: "name",
+      unique: true,
+      slugPaddingSize: 4,
+    },
+  
+  },
+
+  {
+    timestamps: true, // Tự động thêm createdAt và updatedAt
+  }
+);
+
+// Model với type
+const City = model<ICity>("City", citySchema, "cities");
+
+export default City;
+
+```
+
+### src\api\v1\models\comboFood.model.ts
+```ts
+import { Document, Schema, model } from "mongoose";
+
+// Interface cho ComboFood
+export interface IComboFood extends Document {
+  name: string;
+  price: number;
+  description: string;
+  status: string;
+  deleted: boolean;
+}
+
+// Schema cho ComboFood
+const comboFoodSchema = new Schema<IComboFood>(
+  {
+    name: { type: String, required: true },
+    price: { type: Number, required: true },
+    description: { type: String, required: true },
+    status: { type: String, required: true },
+    deleted: {
+      type: Boolean,
+      default: false,
+    },
+  },
+  {
+    timestamps: true, // Tự động thêm createdAt và updatedAt
+  }
+);
+
+// Model với type
+const ComboFood = model<IComboFood>("ComboFood", comboFoodSchema, "combofoods");
+
+export default ComboFood;
+
+```
+
+### src\api\v1\models\comment.model.ts
+```ts
+
+```
+
+### src\api\v1\models\film.model.ts
+```ts
+// src/models/film/film.model.ts
+
+import mongoose, { HydratedDocument, Schema, model } from "mongoose";
+import { IFilm } from "../../../types/film.type";
+import { CommonStatus } from "../../../types/common.type";
+import slug from "mongoose-slug-updater";
+
+// Kích hoạt plugin slug
+mongoose.plugin(slug);
+
+
+export type IFilmDocument = HydratedDocument<IFilm>;
+/**
+ * Schema định nghĩa cấu trúc của document Film trong MongoDB.
+ * Nó ánh xạ từ IFilmDocument interface để đảm bảo type-safety.
+ */
+const filmSchema = new Schema<IFilmDocument>(
+  {
+    title: { type: String, required: true, trim: true },
+    otherTitles: [String],
+    // Thiết lập tham chiếu đến model 'Category'
+    // Giúp cho việc populate dữ liệu danh mục sau này dễ dàng hơn.
+    categoryIds: [{ type: Schema.Types.ObjectId, ref: 'Category', required: true }],
+    actors: [String],
+    directors: [String],
+    releaseDate: { type: Date, required: true },
+    availableFormats: [String],
+    duration: { type: Number, required: true }, // Thời lượng tính bằng phút
+    ageRating: String,
+    trailer: String,
+    thumbnail: { type: String, required: true },
+    filmLanguage: { type: String, required: true },
+    subtitles: { type: String, required: true },
+    description: { type: String, required: true, trim: true },
+    // Slug rất quan trọng cho SEO và URL, nên là duy nhất và viết thường
+    slug: {
+      type: String,
+      slug: "title",
+      unique: true,
+      slugPaddingSize: 4,
+    },
+    status: {
+      type: String,
+      enum: Object.values(CommonStatus),
+      required: true,
+      default: CommonStatus.INACTIVE,
+    },
+    isTrending: {
+      type: Boolean,
+      default: false,
+    },
+    // Dùng cho soft-delete
+    deleted: {
+      type: Boolean,
+      default: false,
+    },
+  },
+  {
+    timestamps: true, // Tự động quản lý createdAt và updatedAt
+    versionKey: false, // Tắt trường __v không cần thiết
+  }
+);
+
+// Tối ưu hóa truy vấn bằng cách tạo index cho các trường hay được tìm kiếm
+filmSchema.index({ title: 'text', slug: 1 }); // Index cho tìm kiếm text trên title và truy vấn nhanh theo slug
+filmSchema.index({ slug: 1, deleted: 1, status: 1 });
+filmSchema.index({ slug: 1, deleted: 1});
+/**
+ * Model cho Film, được biên dịch từ filmSchema.
+ * Cung cấp một interface để tương tác với collection 'films' trong database.
+ * - "Film": Tên của model, dùng trong Mongoose.
+ * - filmSchema: Schema được sử dụng.
+ * - "films": Tên của collection trong MongoDB (viết thường, số nhiều).
+ */
+const Film = model<IFilmDocument>("Film", filmSchema, "films");
+
+export default Film;
+```
+
+### src\api\v1\models\order.model.ts
+```ts
+
+```
+
+### src\api\v1\models\otp.model.ts
+```ts
+import { Document, Schema, model } from "mongoose";
+
+// Interface cho Otp
+export interface IOtp extends Document {
+  email: string;
+  otp: string;
+  type: string;
+  expiresAt: Date;
+}
+
+// Schema cho Otp
+const otpSchema = new Schema<IOtp>(
+  {
+    email: { type: String, required: true },
+    otp: { type: String, required: true },
+    type: { type: String, required: true },
+    expiresAt: {
+      type: Date,
+      default: Date.now(),
+      expires: 300,
+    },
+  },
+  {
+    timestamps: true, // Tự động thêm createdAt và updatedAt
+  }
+);
+
+// Model với type
+const Otp = model<IOtp>("Otp", otpSchema, "otps");
+
+export default Otp;
+
+```
+
+### src\api\v1\models\promotion.model.ts
+```ts
+
+```
+
+### src\api\v1\models\resetToken.model.ts
+```ts
+import { Document, Schema, model } from "mongoose";
+
+// Interface cho ResetToken
+export interface IResetToken extends Document {
+  email: string;
+  resetToken: string;
+  expiresAt: Date;
+}
+
+// Schema cho ResetToken
+const resetTokenSchema = new Schema<IResetToken>(
+  {
+    email: String,
+    resetToken: String,
+    expiresAt: {
+      type: Date,
+      expires: 300,
+    },
+  },
+  {
+    timestamps: true, // Tự động thêm createdAt và updatedAt
+  }
+);
+
+// Model với type
+const ResetToken = model<IResetToken>("ResetToken", resetTokenSchema, "reset-tokens");
+
+export default ResetToken;
+
+```
+
+### src\api\v1\models\room.model.ts
+```ts
+
+```
+
+### src\api\v1\models\showtime.model.ts
+```ts
+
+```
+
+### src\api\v1\models\user.model.ts
+```ts
+import { Document, HydratedDocument, Schema, model } from "mongoose";
+import {IUser, UserRole, UserStatus } from "../../../types/user.type";
+
+// Interface cho model (IUser + Document) - Bổ sung thêm các trường như _id, createdAt, updatedAt,...
+export type IUserDocument = HydratedDocument<IUser>;
+
+
+// Schema cho User
+const userSchema = new Schema<IUserDocument>(
+  {
+    username: { type: String, required: true, unique: true },
+    fullname: String,
+    email: { type: String, required: true, unique: true },
+    password: { type: String, required: true },
+    phone: String,
+    address: String,
+    avatar: String,
+    role: {
+      type: String,
+      enum: Object.values(UserRole),
+      required: true,
+    },
+    // ✅ THAY ĐỔI: Bỏ trường token cũ, thêm refreshToken
+    // token: { type: String, required: true }, // ❌ Xóa trường này
+    refreshToken: { type: String }, // ✅ Lưu refresh token để có thể revoke khi cần
+    status: { type: String, enum: Object.values(UserStatus), required: true },
+    deleted: {
+      type: Boolean,
+      default: false,
+    },
+    deletedAt: { type: Date, default: null },
+  },
+  {
+    timestamps: true, // Tự động thêm createdAt và updatedAt
+  }
+);
+
+// ✅ Indexes - Tạo mục lục để query nhanh
+// userSchema.index({ username: 1 });
+// userSchema.index({ email: 1 });
+// Bỏ hai index này vì đã có unique: true(tự tạo index rồi)
+userSchema.index({ status: 1 });
+userSchema.index({ role: 1 });
+userSchema.index({ role: 1, status: 1 });
+userSchema.index({ refreshToken: 1, deleted: 1 }); // ✅ Thay đổi index từ token sang refreshToken
+userSchema.index({ deleted: 1 });
+
+// Model với type
+const User = model<IUserDocument>("User", userSchema, "users");
+
+export default User;
+```
+
+### src\api\v1\routes\auth.route.ts
+```ts
+import { Router, Request} from "express";
+const router: Router = Router();
+
+import * as authController from "../controllers/auth.controller";
+import { validateForgotPassword, validateLogin, validateRegister, validateResetPassword } from "../validators/auth.validator";
+
+// middlewares/otpLimiter.ts
+import rateLimit from "express-rate-limit";
+import { optionalAuthMiddleware } from "../../../middlewares/auth.middleware";
+
+//set thời gian giãn cách gửi request
+export const otpLimiterByEmail = rateLimit({
+  windowMs: 60 * 1000, // 60 giây
+  max: 1,              // Tối đa 1 request trong 60 giây
+  keyGenerator: (req: Request): string => req.body.email, // Ưu tiên giới hạn theo email
+  standardHeaders: true,
+  message: {
+    code: 429,
+    message: "Bạn chỉ được yêu cầu OTP mỗi 60 giây.",
+  },
+  skipFailedRequests: true, // Không tính những request bị lỗi trước đó (VD: nhập sai định dạng)
+});
+
+
+
+
+//---- CLIENT ----
+//[POST] REGISTER: /api/v1/auth/register
+router.post("/register", validateRegister, authController.register);
+//[POST] CHECK EMAIL OTP: /api/v1/auth/register/check-email
+router.post("/register/check-email", otpLimiterByEmail, authController.checkEmailOtp);
+//[POST] CANCEL REGISTER: /api/v1/auth/register/cancel-register
+router.post("/register/cancel-register", authController.cancelRegister);
+
+
+//[POST] RESEND CHECK EMAIL OTP: /api/v1/auth/resendOtp
+router.post("/resendOtp", otpLimiterByEmail, authController.resendOtp);
+
+
+//[POST] LOGIN: /api/v1/auth/login
+router.post("/login", validateLogin, authController.login);
+//[POST] LOGOUT: /api/v1/auth/logout
+router.post("/logout", authController.logout);
+
+//[POST] FORGOT PASSWORD: /api/v1/auth/password/forgot
+router.post("/password/forgot", validateForgotPassword, otpLimiterByEmail, authController.forgotPassword);
+//[POST] CHECK OTP: /api/v1/auth/password/otp
+router.post("/password/otp", authController.otp);
+//[POST] RESET PASSWORD: /api/v1/auth/password/reset
+router.post("/password/reset", validateResetPassword, authController.resetPassword);
+
+//--- CHECK LOGIN --
+router.get("/me", optionalAuthMiddleware, authController.checkLogin);
+
+
+export default router;
+```
+
+### src\api\v1\routes\category.route.ts
+```ts
+import { Router} from "express";
+const router: Router = Router();
+
+import * as categoryController from "../controllers/category.controller";
+
+router.get("/", categoryController.index);
+
+export default router;
+```
+
+### src\api\v1\routes\cinema.route.ts
+```ts
+import { Router} from "express";
+const router: Router = Router();
+
+import * as cinemaController from "../controllers/cinema.controller";
+import { authMiddleware, optionalAuthMiddleware } from "../../../middlewares/auth.middleware";
+import { UserRole } from "../../../types/user.type";
+
+//[GET] LIST: /api/v1/cinemas
+router.get("/", optionalAuthMiddleware, cinemaController.index);
+
+//[GET] DETAIL BY SLUG (PUBLIC): /api/v1/cinemas/slug/:slug
+// Chỉ trả về cinema active và chưa bị xóa
+router.get("/slug/:slug", cinemaController.getBySlug);
+
+//[GET] DETAIL BY ID (ADMIN): /api/v1/cinemas/:id  
+// Trả về cinema cho admin (chỉ cần chưa bị xóa)
+router.get("/:id", authMiddleware(UserRole.ADMIN), cinemaController.getById);
+
+//[POST] CREATE: /api/v1/cinemas
+router.post("/", authMiddleware(UserRole.ADMIN), cinemaController.create);
+
+//[PATCH] EDIT: /api/v1/cinemas/:id
+router.patch("/:id", authMiddleware(UserRole.ADMIN), cinemaController.edit);
+
+//[DELETE] DELETE: /api/v1/cinemas/:id
+router.delete("/:id", authMiddleware(UserRole.ADMIN), cinemaController.remove);
+
+export default router;
+```
+
+### src\api\v1\routes\city.route.ts
+```ts
+import { Router} from "express";
+const router: Router = Router();
+
+import * as cityController from "../controllers/city.controller";
+
+router.get("/", cityController.index);
+
+router.get("/:slug", cityController.show);
+
+export default router;
+```
+
+### src\api\v1\routes\comboFood.route.ts
+```ts
+import { Router} from "express";
+const router: Router = Router();
+
+import * as comboFoodController from "../controllers/comboFood.controller";
+
+router.get("/", comboFoodController.index);
+
+export default router;
+```
+
+### src\api\v1\routes\film.route.ts
+```ts
+import { Router} from "express";
+const router: Router = Router();
+
+import * as filmController from "../controllers/film.controller";
+import { authMiddleware, optionalAuthMiddleware } from "../../../middlewares/auth.middleware";
+import { UserRole } from "../../../types/user.type";
+import { validateCreateFilm, validateUpdateFilm } from "../validators/film.validator";
+
+
+ router.get("/", optionalAuthMiddleware, filmController.index);
+
+//--- PUBLIC ---
+
+//[GET] DETAIL: /api/v1/films/slug/:slug
+ router.get("/slug/:slug",  filmController.getBySlug);
+
+//[GET] GET BY ID: /api/v1/films/:id
+router.get("/:id", authMiddleware(UserRole.ADMIN), filmController.getById);
+
+//[POST] CREATE: /api/v1/films
+router.post("/", authMiddleware(UserRole.ADMIN),validateCreateFilm, filmController.create);
+
+//[PATCH] EDIT: /api/v1/films/:id
+router.patch("/:id", authMiddleware(UserRole.ADMIN),validateUpdateFilm, filmController.edit);
+
+//[DELETE] DELETE: /api/v1/films/:id
+router.delete("/:id", authMiddleware(UserRole.ADMIN), filmController.remove);
+
+
+
+export default router;
+```
+
+### src\api\v1\routes\index.route.ts
+```ts
+import { Express } from "express";
+import categoryRoutes from "./category.route";
+import cityRoutes from "./city.route";
+import comboFoodRoutes from "./comboFood.route";
+import userRoutes from "./user.route";
+import authRoutes from "./auth.route";
+import filmRoutes from "./film.route";
+import cinemaRoutes from "./cinema.route";
+import uploadRoutes from "./upload.route";
+const mainV1Routes = (app: Express) => {
+  const version = "/api/v1";
+
+  // [API] Public
+  app.use(version + "/categories", categoryRoutes);
+  app.use(version + "/cities", cityRoutes);
+  app.use(version + "/combofoods", comboFoodRoutes);
+
+  // [API] Private
+  app.use(version + "/users", userRoutes);
+  app.use(version + "/auth", authRoutes);
+  app.use(version + "/films", filmRoutes);
+  app.use(version + "/cinemas", cinemaRoutes);
+  app.use(version + "/upload", uploadRoutes);
+};
+
+export default mainV1Routes;
+
+```
+
+### src\api\v1\routes\upload.route.ts
+```ts
+import { Router } from "express";
+import multer from "multer";
+const router: Router = Router();
+const upload = multer();
+import * as uploadCloud from "../../../middlewares/uploadCloud.middlewares";
+import * as uploadController from "../controllers/upload.controller";
+
+router.post(
+  "/",
+  upload.single("file"),
+  uploadCloud.uploadSingle,
+  uploadController.index
+);
+
+router.post("/image", upload.single("file"), uploadController.uploadImage);
+
+export default router;
+
+```
+
+### src\api\v1\routes\user.route.ts
+```ts
+import { Router} from "express";
+const router: Router = Router();
+
+import * as userController from "../controllers/user.controller";
+import { authMiddleware, optionalAuthMiddleware } from "../../../middlewares/auth.middleware";
+import { UserRole } from "../../../types/user.type";
+import { validateChangePassword, validateUpdateProfile } from "../validators/user.validator";
+
+// --- USER ---
+//[GET] DETAIL: /api/v1/users/me
+router.get("/me", authMiddleware(UserRole.USER), userController.me);
+//[PATCH] EDIT: /api/v1/users/me
+router.patch("/me", authMiddleware(UserRole.USER), validateUpdateProfile, userController.edit);
+//[PATCH] CHANGE PASSWORD: /api/v1/users/me/change-password
+router.patch("/me/change-password", authMiddleware(UserRole.USER), validateChangePassword, userController.changePassword);
+
+
+
+// --- ADMIN ---
+//[GET] LIST: /api/v1/users
+router.get("/", authMiddleware(UserRole.ADMIN), userController.index);
+//[GET] DETAIL: /api/v1/users/:id
+router.get("/:id", authMiddleware(UserRole.ADMIN), userController.detail);
+
+
+export default router;
+```
+
+### src\api\v1\validators\auth.validator.ts
+```ts
+import { Request, Response, NextFunction } from "express";
+import {
+  validateEmail,
+  validatePassword,
+  validateUsername,
+} from "./common.validator";
+
+
+//validate login
+export const validateLogin = (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const { identifier, password } = req.body as {
+      identifier: string;
+      password: string;
+    };
+
+    if (!identifier) {
+      return res
+        .status(400)
+        .json({ message: "Vui lòng nhập email hoặc tên người dùng" });
+    }
+
+    // Kiểm tra nếu là email
+    if (identifier.includes("@")) {
+      const emailError = validateEmail(identifier);
+      if (emailError) {
+        return res.status(400).json({ message: emailError });
+      }
+    } else {
+      // Nếu không có @ => coi là username
+      const usernameError = validateUsername(identifier);
+      if (usernameError) {
+        return res.status(400).json({ message: usernameError });
+      }
+    }
+
+    // Validate mật khẩu
+    const passwordError = validatePassword(password);
+    if (passwordError) {
+      return res.status(400).json({ message: passwordError });
+    }
+
+    next(); // ✅ hợp lệ thì cho chạy tiếp
+  } catch (error) {
+    console.log(error);
+    return res.status(500).json({ message: "Lỗi server" });
+  }
+};
+
+// Validate register
+export const validateRegister = (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const { email, username, password, confirmPassword } = req.body;
+
+    const emailError = validateEmail(email);
+    if (emailError) return res.status(400).json({ message: emailError });
+
+    const usernameError = validateUsername(username);
+    if (usernameError) return res.status(400).json({ message: usernameError });
+
+    const passwordError = validatePassword(password);
+    if (passwordError) return res.status(400).json({ message: passwordError });
+
+    if (password !== confirmPassword) {
+      return res.status(400).json({ message: "Mật khẩu nhập lại không khớp" });
+    }
+
+    next();
+  } catch (error) {
+    console.log(error);
+    return res.status(500).json({ message: "Lỗi server" });
+  }
+};
+
+// Validate forgot password
+export const validateForgotPassword = (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): void => {
+  try {
+    const { email } = req.body as { email?: string };
+
+    if (!email) {
+      res.status(400).json({ code: 400, message: "Email là bắt buộc!!!" });
+      return;
+    }
+    const emailError = validateEmail(email);
+    if (emailError) {
+      res.status(400).json({ code: 400, message: emailError });
+      return;
+    }
+
+    next();
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "Lỗi server" });
+  }
+};
+
+// Validate reset password
+export const validateResetPassword = (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const { newPassword, confirmPassword } = req.body as {
+      newPassword?: string;
+      confirmPassword?: string;
+    };
+
+    if (!newPassword) {
+      return res.status(400).json({
+        code: 400,
+        message: "Mật khẩu mới không được để trống",
+      });
+    }
+
+    const passwordError = validatePassword(newPassword);
+    if (passwordError) {
+      return res.status(400).json({
+        code: 400,
+        message: passwordError,
+      });
+    }
+
+    if (!confirmPassword) {
+      return res.status(400).json({
+        code: 400,
+        message: "Xác nhận mật khẩu không được để trống",
+      });
+    }
+
+    if (newPassword !== confirmPassword) {
+      return res.status(400).json({
+        code: 400,
+        message: "Mật khẩu xác nhận không khớp",
+      });
+    }
+
+    next();
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "Lỗi server" });
+  }
+};
+
+```
+
+### src\api\v1\validators\cinema.validator.ts
+```ts
+import { Request, Response, NextFunction } from "express";
+import { CommonStatus } from "../../../types/common.type";
+
+// Kiểm tra ObjectId hợp lệ
+const isValidObjectId = (id: string): boolean => {
+  return /^[0-9a-fA-F]{24}$/.test(id);
+};
+
+// Kiểm tra URL hợp lệ
+const isValidUrl = (url: string): boolean => {
+  try {
+    new URL(url);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+// Validate tạo mới cinema
+export const validateCreateCinema = (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): void => {
+  try {
+    const {
+      name,
+      parentId,
+      address,
+      avatar,
+      description,
+      cityId,
+      status
+    } = req.body;
+
+    // Validate name
+    if (!name || typeof name !== 'string' || !name.trim()) {
+      res.status(400).json({ 
+        code: 400, 
+        message: "Tên rạp chiếu không được để trống" 
+      });
+      return;
+    }
+
+    if (name.trim().length < 2) {
+      res.status(400).json({ 
+        code: 400, 
+        message: "Tên rạp chiếu phải có ít nhất 2 ký tự" 
+      });
+      return;
+    }
+
+    if (name.trim().length > 100) {
+      res.status(400).json({ 
+        code: 400, 
+        message: "Tên rạp chiếu không được vượt quá 100 ký tự" 
+      });
+      return;
+    }
+
+    // Validate parentId (optional)
+    if (parentId && !isValidObjectId(parentId)) {
+      res.status(400).json({ 
+        code: 400, 
+        message: "ID rạp cha không hợp lệ" 
+      });
+      return;
+    }
+
+    // Validate address
+    if (!address || typeof address !== 'string' || !address.trim()) {
+      res.status(400).json({ 
+        code: 400, 
+        message: "Địa chỉ rạp chiếu không được để trống" 
+      });
+      return;
+    }
+
+    if (address.trim().length < 10) {
+      res.status(400).json({ 
+        code: 400, 
+        message: "Địa chỉ rạp chiếu phải có ít nhất 10 ký tự" 
+      });
+      return;
+    }
+
+    if (address.trim().length > 200) {
+      res.status(400).json({ 
+        code: 400, 
+        message: "Địa chỉ rạp chiếu không được vượt quá 200 ký tự" 
+      });
+      return;
+    }
+
+    // Validate avatar
+    if (!avatar || typeof avatar !== 'string' || !isValidUrl(avatar)) {
+      res.status(400).json({ 
+        code: 400, 
+        message: "Link ảnh đại diện không hợp lệ" 
+      });
+      return;
+    }
+
+    // Validate description
+    if (!description || typeof description !== 'string' || !description.trim()) {
+      res.status(400).json({ 
+        code: 400, 
+        message: "Mô tả rạp chiếu không được để trống" 
+      });
+      return;
+    }
+
+    if (description.trim().length < 20) {
+      res.status(400).json({ 
+        code: 400, 
+        message: "Mô tả rạp chiếu phải có ít nhất 20 ký tự" 
+      });
+      return;
+    }
+
+    if (description.trim().length > 500) {
+      res.status(400).json({ 
+        code: 400, 
+        message: "Mô tả rạp chiếu không được vượt quá 500 ký tự" 
+      });
+      return;
+    }
+
+    // Validate cityId
+    if (!cityId || !isValidObjectId(cityId)) {
+      res.status(400).json({ 
+        code: 400, 
+        message: "ID thành phố không hợp lệ" 
+      });
+      return;
+    }
+
+    // Validate status (optional)
+    if (status && !Object.values(CommonStatus).includes(status)) {
+      res.status(400).json({ 
+        code: 400, 
+        message: `Trạng thái không hợp lệ. Chỉ chấp nhận: ${Object.values(CommonStatus).join(', ')}` 
+      });
+      return;
+    }
+
+    // Làm sạch dữ liệu
+    req.body.name = name.trim();
+    req.body.address = address.trim();
+    req.body.description = description.trim();
+
+    next();
+  } catch (error) {
+    console.error("Cinema validation error:", error);
+    res.status(500).json({ message: "Lỗi server" });
+  }
+};
+
+// Validate cập nhật cinema
+export const validateUpdateCinema = (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): void => {
+  try {
+    const body = { ...req.body };
+
+    // Loại bỏ các trường không được phép sửa
+    const forbiddenFields = ['slug', 'createdAt', 'updatedAt'];
+    forbiddenFields.forEach(field => delete body[field]);
+
+    // Validate từng trường nếu có trong body
+    if (body.name !== undefined) {
+      if (!body.name || typeof body.name !== 'string' || !body.name.trim()) {
+        res.status(400).json({ 
+          code: 400, 
+          message: "Tên rạp chiếu không được để trống" 
+        });
+        return;
+      }
+      
+      if (body.name.trim().length < 2 || body.name.trim().length > 100) {
+        res.status(400).json({ 
+          code: 400, 
+          message: "Tên rạp chiếu phải có từ 2 đến 100 ký tự" 
+        });
+        return;
+      }
+      body.name = body.name.trim();
+    }
+
+    // Validate parentId (có thể null/undefined để xóa parent)
+    if (body.parentId !== undefined && body.parentId !== null && body.parentId !== '') {
+      if (!isValidObjectId(body.parentId)) {
+        res.status(400).json({ 
+          code: 400, 
+          message: "ID rạp cha không hợp lệ" 
+        });
+        return;
+      }
+    }
+
+    if (body.address !== undefined) {
+      if (!body.address || typeof body.address !== 'string' || !body.address.trim()) {
+        res.status(400).json({ 
+          code: 400, 
+          message: "Địa chỉ rạp chiếu không được để trống" 
+        });
+        return;
+      }
+
+      if (body.address.trim().length < 10 || body.address.trim().length > 200) {
+        res.status(400).json({ 
+          code: 400, 
+          message: "Địa chỉ rạp chiếu phải có từ 10 đến 200 ký tự" 
+        });
+        return;
+      }
+      body.address = body.address.trim();
+    }
+
+    if (body.avatar !== undefined) {
+      if (!isValidUrl(body.avatar)) {
+        res.status(400).json({ 
+          code: 400, 
+          message: "Link ảnh đại diện không hợp lệ" 
+        });
+        return;
+      }
+    }
+
+    if (body.description !== undefined) {
+      if (!body.description || typeof body.description !== 'string' || !body.description.trim()) {
+        res.status(400).json({ 
+          code: 400, 
+          message: "Mô tả rạp chiếu không được để trống" 
+        });
+        return;
+      }
+
+      if (body.description.trim().length < 20 || body.description.trim().length > 500) {
+        res.status(400).json({ 
+          code: 400, 
+          message: "Mô tả rạp chiếu phải có từ 20 đến 500 ký tự" 
+        });
+        return;
+      }
+      body.description = body.description.trim();
+    }
+
+    if (body.cityId !== undefined) {
+      if (!isValidObjectId(body.cityId)) {
+        res.status(400).json({ 
+          code: 400, 
+          message: "ID thành phố không hợp lệ" 
+        });
+        return;
+      }
+    }
+
+    if (body.status !== undefined && !Object.values(CommonStatus).includes(body.status)) {
+      res.status(400).json({ 
+        code: 400, 
+        message: `Trạng thái không hợp lệ. Chỉ chấp nhận: ${Object.values(CommonStatus).join(', ')}` 
+      });
+      return;
+    }
+
+    // Gán lại body đã lọc vào req.body
+    req.body = body;
+
+    next();
+  } catch (error) {
+    console.error("Cinema update validation error:", error);
+    res.status(500).json({ message: "Lỗi server" });
+  }
+};
+```
+
+### src\api\v1\validators\common.validator.ts
+```ts
+
+export const validatePassword = (password: string): string | null => {
+  const letterRegex = /[a-zA-Z]/; // có ít nhất 1 chữ
+  const numberRegex = /[0-9]/; // có ít nhất 1 số
+
+  if (password.length < 8) {
+    return "Mật khẩu phải có ít nhất 8 ký tự";
+  }
+
+  if (password.length > 20) {
+    return "Mật khẩu không được vượt quá 20 ký tự";
+  }
+
+  if (/\s/.test(password)) {
+    return "Mật khẩu không được chứa ký tự trống (space)";
+  }
+
+  if (!letterRegex.test(password)) {
+    return "Mật khẩu phải chứa ít nhất một chữ cái";
+  }
+
+  if (!numberRegex.test(password)) {
+    return "Mật khẩu phải chứa ít nhất một số";
+  }
+
+  return null; // hợp lệ
+};
+
+export const validateEmail = (email: string): string | null => {
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+  if (!email) {
+    return "Email không được để trống";
+  }
+
+  if (/\s/.test(email)) {
+    return "Email không được chứa ký tự trống (space)";
+  }
+
+  if (!emailRegex.test(email)) {
+    return "Email không hợp lệ";
+  }
+
+  return null; // hợp lệ
+};
+
+export const validateUsername = (username: string): string | null => {
+  if (!username) {
+    return "Tên người dùng không được để trống";
+  }
+  if(username.length < 4) {
+    return "Tên người dùng tối thiểu phải 4 ký tự";
+  }
+  if (username.length > 25) {
+    return "Tên người dùng không được vượt quá 25 ký tự";
+  }
+
+  if (/\s/.test(username)) {
+    return "Tên người dùng không được chứa ký tự trống (space)";
+  }
+
+  if (/[A-Z]/.test(username)) {
+    return "Tên người dùng không được chứa chữ hoa";
+  }
+
+  return null; // hợp lệ
+};
+
+export const validatePhone = (phone: string): string | null => {
+  // Chuẩn VN: 10 hoặc 11 số, bắt đầu bằng 0
+  const phoneRegex = /^0\d{9,10}$/;
+
+  if (!phone) return "Số điện thoại không được để trống";
+  if (!phoneRegex.test(phone)) return "Số điện thoại không hợp lệ";
+
+  return null; // hợp lệ
+};
+
+```
+
+### src\api\v1\validators\film.validator.ts
+```ts
+import { Request, Response, NextFunction } from "express";
+import { CommonStatus } from "../../../types/common.type";
+
+// Kiểm tra ObjectId hợp lệ
+const isValidObjectId = (id: string): boolean => {
+  return /^[0-9a-fA-F]{24}$/.test(id);
+};
+
+// Kiểm tra URL hợp lệ
+const isValidUrl = (url: string): boolean => {
+  try {
+    new URL(url);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+// Validate tạo mới film
+export const validateCreateFilm = (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): void => {
+  try {
+    const {
+      title,
+      categoryIds,
+      actors,
+      directors,
+      releaseDate,
+      availableFormats,
+      duration,
+      ageRating,
+      trailer,
+      thumbnail,
+      filmLanguage,
+      subtitles,
+      description,
+      status,
+      isTrending
+    } = req.body;
+
+    // Validate title
+    if (!title || typeof title !== 'string' || !title.trim()) {
+      res.status(400).json({ 
+        code: 400, 
+        message: "Tiêu đề phim không được để trống" 
+      });
+      return;
+    }
+
+    if (title.trim().length < 2) {
+      res.status(400).json({ 
+        code: 400, 
+        message: "Tiêu đề phim phải có ít nhất 2 ký tự" 
+      });
+      return;
+    }
+
+    if (title.trim().length > 200) {
+      res.status(400).json({ 
+        code: 400, 
+        message: "Tiêu đề phim không được vượt quá 200 ký tự" 
+      });
+      return;
+    }
+
+    // Validate categoryIds
+    if (!categoryIds || !Array.isArray(categoryIds) || categoryIds.length === 0) {
+      res.status(400).json({ 
+        code: 400, 
+        message: "Phim phải thuộc ít nhất một danh mục" 
+      });
+      return;
+    }
+
+    for (const categoryId of categoryIds) {
+      if (!isValidObjectId(categoryId)) {
+        res.status(400).json({ 
+          code: 400, 
+          message: "ID danh mục không hợp lệ" 
+        });
+        return;
+      }
+    }
+
+    // Validate actors
+    if (!actors || !Array.isArray(actors) || actors.length === 0) {
+      res.status(400).json({ 
+        code: 400, 
+        message: "Phim phải có ít nhất một diễn viên" 
+      });
+      return;
+    }
+
+    for (const actor of actors) {
+      if (!actor || typeof actor !== 'string' || !actor.trim()) {
+        res.status(400).json({ 
+          code: 400, 
+          message: "Tên diễn viên không được để trống" 
+        });
+        return;
+      }
+      if (actor.trim().length > 100) {
+        res.status(400).json({ 
+          code: 400, 
+          message: "Tên diễn viên không được vượt quá 100 ký tự" 
+        });
+        return;
+      }
+    }
+
+    // Validate directors
+    if (!directors || !Array.isArray(directors) || directors.length === 0) {
+      res.status(400).json({ 
+        code: 400, 
+        message: "Phim phải có ít nhất một đạo diễn" 
+      });
+      return;
+    }
+
+    for (const director of directors) {
+      if (!director || typeof director !== 'string' || !director.trim()) {
+        res.status(400).json({ 
+          code: 400, 
+          message: "Tên đạo diễn không được để trống" 
+        });
+        return;
+      }
+      if (director.trim().length > 100) {
+        res.status(400).json({ 
+          code: 400, 
+          message: "Tên đạo diễn không được vượt quá 100 ký tự" 
+        });
+        return;
+      }
+    }
+
+    // Validate releaseDate
+    if (!releaseDate) {
+      res.status(400).json({ 
+        code: 400, 
+        message: "Ngày phát hành không được để trống" 
+      });
+      return;
+    }
+
+    const releaseDateObj = new Date(releaseDate);
+    if (isNaN(releaseDateObj.getTime())) {
+      res.status(400).json({ 
+        code: 400, 
+        message: "Ngày phát hành không hợp lệ" 
+      });
+      return;
+    }
+
+    // Validate availableFormats
+    if (!availableFormats || !Array.isArray(availableFormats) || availableFormats.length === 0) {
+      res.status(400).json({ 
+        code: 400, 
+        message: "Phim phải có ít nhất một định dạng chiếu" 
+      });
+      return;
+    }
+
+    const validFormats = ['2D', '3D', 'IMAX', '4DX'];
+    for (const format of availableFormats) {
+      if (!validFormats.includes(format)) {
+        res.status(400).json({ 
+          code: 400, 
+          message: `Định dạng chiếu không hợp lệ. Chỉ chấp nhận: ${validFormats.join(', ')}` 
+        });
+        return;
+      }
+    }
+
+    // Validate duration
+    if (!duration || typeof duration !== 'number' || duration <= 0) {
+      res.status(400).json({ 
+        code: 400, 
+        message: "Thời lượng phim phải là số dương (tính bằng phút)" 
+      });
+      return;
+    }
+
+    if (duration < 30 || duration > 300) {
+      res.status(400).json({ 
+        code: 400, 
+        message: "Thời lượng phim phải từ 30 đến 300 phút" 
+      });
+      return;
+    }
+
+    // Validate ageRating
+    if (!ageRating || typeof ageRating !== 'string') {
+      res.status(400).json({ 
+        code: 400, 
+        message: "Phân loại độ tuổi không được để trống" 
+      });
+      return;
+    }
+
+    const validAgeRatings = ['P', 'K', 'T13', 'T16', 'T18', 'C'];
+    if (!validAgeRatings.includes(ageRating)) {
+      res.status(400).json({ 
+        code: 400, 
+        message: `Phân loại độ tuổi không hợp lệ. Chỉ chấp nhận: ${validAgeRatings.join(', ')}` 
+      });
+      return;
+    }
+
+    // Validate trailer (optional)
+    if (trailer && (!isValidUrl(trailer) || !trailer.includes('youtube.com'))) {
+      res.status(400).json({ 
+        code: 400, 
+        message: "Link trailer phải là URL YouTube hợp lệ" 
+      });
+      return;
+    }
+
+    // Validate thumbnail
+    if (!thumbnail || typeof thumbnail !== 'string' || !isValidUrl(thumbnail)) {
+      res.status(400).json({ 
+        code: 400, 
+        message: "Link ảnh thumbnail không hợp lệ" 
+      });
+      return;
+    }
+
+    // Validate language
+if (!filmLanguage || typeof filmLanguage !== 'string' || !filmLanguage.trim()) {
+  res.status(400).json({ 
+    code: 400, 
+    message: "Ngôn ngữ phim không được để trống" 
+  });
+  return;
+}
+
+    // Validate subtitles
+    if (!subtitles || typeof subtitles !== 'string' || !subtitles.trim()) {
+      res.status(400).json({ 
+        code: 400, 
+        message: "Phụ đề không được để trống" 
+      });
+      return;
+    }
+
+    // Validate description
+    if (!description || typeof description !== 'string' || !description.trim()) {
+      res.status(400).json({ 
+        code: 400, 
+        message: "Mô tả phim không được để trống" 
+      });
+      return;
+    }
+
+    if (description.trim().length < 20) {
+      res.status(400).json({ 
+        code: 400, 
+        message: "Mô tả phim phải có ít nhất 20 ký tự" 
+      });
+      return;
+    }
+
+    if (description.trim().length > 1000) {
+      res.status(400).json({ 
+        code: 400, 
+        message: "Mô tả phim không được vượt quá 1000 ký tự" 
+      });
+      return;
+    }
+
+    // Validate status (optional)
+    if (status && !Object.values(CommonStatus).includes(status)) {
+      res.status(400).json({ 
+        code: 400, 
+        message: `Trạng thái không hợp lệ. Chỉ chấp nhận: ${Object.values(CommonStatus).join(', ')}` 
+      });
+      return;
+    }
+
+    // Validate isTrending (optional)
+    if (isTrending !== undefined && typeof isTrending !== 'boolean') {
+      res.status(400).json({ 
+        code: 400, 
+        message: "isTrending phải là boolean" 
+      });
+      return;
+    }
+
+    // Làm sạch dữ liệu
+    req.body.title = title.trim();
+    req.body.actors = actors.map((actor: string) => actor.trim());
+    req.body.directors = directors.map((director: string) => director.trim());
+    req.body.filmLanguage = filmLanguage.trim();
+    req.body.subtitles = subtitles.trim();
+    req.body.description = description.trim();
+
+    next();
+  } catch (error) {
+    console.error("Film validation error:", error);
+    res.status(500).json({ message: "Lỗi server" });
+  }
+};
+
+// Validate cập nhật film
+export const validateUpdateFilm = (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): void => {
+  try {
+    const body = { ...req.body };
+
+    // Loại bỏ các trường không được phép sửa
+    const forbiddenFields = ['slug', 'createdAt', 'updatedAt'];
+    forbiddenFields.forEach(field => delete body[field]);
+
+    // Validate từng trường nếu có trong body
+    if (body.title !== undefined) {
+      if (!body.title || typeof body.title !== 'string' || !body.title.trim()) {
+        res.status(400).json({ 
+          code: 400, 
+          message: "Tiêu đề phim không được để trống" 
+        });
+        return;
+      }
+      
+      if (body.title.trim().length < 2 || body.title.trim().length > 200) {
+        res.status(400).json({ 
+          code: 400, 
+          message: "Tiêu đề phim phải có từ 2 đến 200 ký tự" 
+        });
+        return;
+      }
+      body.title = body.title.trim();
+    }
+
+    if (body.categoryIds !== undefined) {
+      if (!Array.isArray(body.categoryIds) || body.categoryIds.length === 0) {
+        res.status(400).json({ 
+          code: 400, 
+          message: "Phim phải thuộc ít nhất một danh mục" 
+        });
+        return;
+      }
+
+      for (const categoryId of body.categoryIds) {
+        if (!isValidObjectId(categoryId)) {
+          res.status(400).json({ 
+            code: 400, 
+            message: "ID danh mục không hợp lệ" 
+          });
+          return;
+        }
+      }
+    }
+
+    if (body.duration !== undefined) {
+      if (typeof body.duration !== 'number' || body.duration <= 0) {
+        res.status(400).json({ 
+          code: 400, 
+          message: "Thời lượng phim phải là số dương" 
+        });
+        return;
+      }
+
+      if (body.duration < 30 || body.duration > 300) {
+        res.status(400).json({ 
+          code: 400, 
+          message: "Thời lượng phim phải từ 30 đến 300 phút" 
+        });
+        return;
+      }
+    }
+
+    if (body.ageRating !== undefined) {
+      const validAgeRatings = ['P', 'K', 'T13', 'T16', 'T18', 'C'];
+      if (!validAgeRatings.includes(body.ageRating)) {
+        res.status(400).json({ 
+          code: 400, 
+          message: `Phân loại độ tuổi không hợp lệ. Chỉ chấp nhận: ${validAgeRatings.join(', ')}` 
+        });
+        return;
+      }
+    }
+
+    if (body.trailer !== undefined && body.trailer) {
+      if (!isValidUrl(body.trailer) || !body.trailer.includes('youtube.com')) {
+        res.status(400).json({ 
+          code: 400, 
+          message: "Link trailer phải là URL YouTube hợp lệ" 
+        });
+        return;
+      }
+    }
+
+    if (body.thumbnail !== undefined) {
+      if (!isValidUrl(body.thumbnail)) {
+        res.status(400).json({ 
+          code: 400, 
+          message: "Link ảnh thumbnail không hợp lệ" 
+        });
+        return;
+      }
+    }
+
+    if (body.description !== undefined) {
+      if (!body.description || typeof body.description !== 'string' || !body.description.trim()) {
+        res.status(400).json({ 
+          code: 400, 
+          message: "Mô tả phim không được để trống" 
+        });
+        return;
+      }
+
+      if (body.description.trim().length < 20 || body.description.trim().length > 1000) {
+        res.status(400).json({ 
+          code: 400, 
+          message: "Mô tả phim phải có từ 20 đến 1000 ký tự" 
+        });
+        return;
+      }
+      body.description = body.description.trim();
+    }
+
+    if (body.status !== undefined && !Object.values(CommonStatus).includes(body.status)) {
+      res.status(400).json({ 
+        code: 400, 
+        message: `Trạng thái không hợp lệ. Chỉ chấp nhận: ${Object.values(CommonStatus).join(', ')}` 
+      });
+      return;
+    }
+
+    if (body.isTrending !== undefined && typeof body.isTrending !== 'boolean') {
+      res.status(400).json({ 
+        code: 400, 
+        message: "isTrending phải là boolean" 
+      });
+      return;
+    }
+
+    // Gán lại body đã lọc vào req.body
+    req.body = body;
+
+    next();
+  } catch (error) {
+    console.error("Film update validation error:", error);
+    res.status(500).json({ message: "Lỗi server" });
+  }
+};
+```
+
+### src\api\v1\validators\user.validator.ts
+```ts
+import { Request, Response, NextFunction } from "express";
+import { validatePassword, validatePhone } from "./common.validator";
+
+export const validateChangePassword = (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const { oldPassword, newPassword, confirmPassword } = req.body as {
+      oldPassword?: string;
+      newPassword?: string;
+      confirmPassword?: string;
+    };
+
+    // Kiểm tra mật khẩu cũ
+    if (!oldPassword) {
+      return res.status(400).json({
+        code: 400,
+        message: "Mật khẩu cũ không được để trống",
+      });
+    }
+
+    // Kiểm tra mật khẩu mới
+    if (!newPassword) {
+      return res.status(400).json({
+        code: 400,
+        message: "Mật khẩu mới không được để trống",
+      });
+    }
+
+    const passwordError = validatePassword(newPassword);
+    if (passwordError) {
+      return res.status(400).json({
+        code: 400,
+        message: passwordError,
+      });
+    }
+
+    // Kiểm tra xác nhận mật khẩu
+    if (!confirmPassword) {
+      return res.status(400).json({
+        code: 400,
+        message: "Xác nhận mật khẩu không được để trống",
+      });
+    }
+
+    if (newPassword !== confirmPassword) {
+      return res.status(400).json({
+        code: 400,
+        message: "Mật khẩu xác nhận không khớp",
+      });
+    }
+
+    next();
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "Lỗi server" });
+  }
+};
+
+export const validateUpdateProfile = (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const body = { ...req.body }; // copy để thao tác
+
+    // Loại bỏ các trường không được phép sửa
+    const forbiddenFields = [
+      "username",
+      "email",
+      "password",
+      "role",
+      "status",
+      "token",
+    ];
+    forbiddenFields.forEach((field) => delete body[field]);
+
+    // Validate fullname
+    if (body.fullname && body.fullname.length > 100) {
+      return res.status(400).json({
+        code: 400,
+        message: "Họ và tên không được vượt quá 100 ký tự",
+      });
+    }
+
+    // Validate phone
+    if (body.phone) {
+      const phoneError = validatePhone(body.phone);
+      if (phoneError) {
+        return res.status(400).json({
+          code: 400,
+          message: phoneError,
+        });
+      }
+    }
+
+    // Validate address
+    if (body.address && body.address.length > 200) {
+      return res.status(400).json({
+        code: 400,
+        message: "Địa chỉ không được vượt quá 200 ký tự",
+      });
+    }
+
+    // Gán lại body đã lọc vào req.body
+    req.body = body;
+
+    next();
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "Lỗi server" });
+  }
+};
+
+```
+
+### src\config\database.ts
+```ts
+import mongoose from "mongoose";
+
+export const connect = async () : Promise<void> => {
+    try {
+        await mongoose.connect(process.env.MONGO_URL || "");
+        console.log("✅ Connected to MongoDB");
+    } catch (error) {
+        console.error("❌ Error connecting to MongoDB:", error);
+    }
+}
+
+```
+
+### src\helpers\generate.ts
+```ts
+// utils/random.ts
+
+/**
+ * Sinh token ngẫu nhiên gồm chữ và số
+ * @param length Độ dài token (mặc định: 20)
+ * @returns Chuỗi token
+ */
+export const generateToken = (length: number = 20): string => {
+  const characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+  let token = '';
+
+  for (let i = 0; i < length; i++) {
+    const randomIndex = Math.floor(Math.random() * characters.length);
+    token += characters.charAt(randomIndex);
+  }
+
+  return token;
+};
+
+/**
+ * Sinh số ngẫu nhiên dạng chuỗi số (OTP)
+ * @param length Độ dài số (mặc định: 6)
+ * @returns Chuỗi số OTP
+ */
+export const generateRandomNumber = (length: number = 6): string => {
+  const digits = '0123456789';
+  let result = '';
+
+  for (let i = 0; i < length; i++) {
+    const randomIndex = Math.floor(Math.random() * digits.length);
+    result += digits.charAt(randomIndex);
+  }
+
+  return result;
+};
+
+```
+
+### src\helpers\jwt.ts
+```ts
+import jwt, { JwtPayload } from "jsonwebtoken";
+
+export interface ITokenPayload {
+  userId: string;
+  username: string;
+  email: string;
+  role: string;
+}
+
+/**
+ * Tạo Access Token - thời hạn 15 phút
+ * Chứa thông tin cần thiết cho authentication
+ */
+export const generateAccessToken = (payload: ITokenPayload): string => {
+  return jwt.sign(payload, process.env.JWT_ACCESS_SECRET!, {
+    expiresIn: "15m", // 15 phút - ngắn để bảo mật cao
+  });
+};
+
+/**
+ * Tạo Refresh Token - thời hạn 7 ngày  
+ * Chỉ chứa userId để tối thiểu hóa thông tin
+ */
+export const generateRefreshToken = (userId: string): string => {
+  return jwt.sign({ userId }, process.env.JWT_REFRESH_SECRET!, {
+    expiresIn: "7d", // 7 ngày như yêu cầu
+  });
+};
+
+/**
+ * Verify Access Token
+ */
+export const verifyAccessToken = (token: string): ITokenPayload => {
+  return jwt.verify(token, process.env.JWT_ACCESS_SECRET!) as ITokenPayload;
+};
+
+/**
+ * Verify Refresh Token
+ */
+export const verifyRefreshToken = (token: string): { userId: string } => {
+  return jwt.verify(token, process.env.JWT_REFRESH_SECRET!) as { userId: string };
+};
+
+/**
+ * Decode token không verify (dùng khi cần lấy thông tin từ expired token)
+ */
+export const decodeToken = (token: string): ITokenPayload | null => {
+  try {
+    return jwt.decode(token) as ITokenPayload;
+  } catch (error) {
+    return null;
+  }
+};
+```
+
+### src\helpers\password.ts
+```ts
+import bcrypt from "bcryptjs";
+
+/**
+ * Hash password bằng bcrypt với salt rounds = 12
+ * Salt rounds cao hơn = bảo mật hơn nhưng chậm hơn
+ */
+export const hashPassword = async (password: string): Promise<string> => {
+  const saltRounds = 12; // Khuyến nghị cho production
+  return await bcrypt.hash(password, saltRounds);
+};
+
+/**
+ * So sánh password plain text với password đã hash
+ * @param plainPassword - Password người dùng nhập vào
+ * @param hashedPassword - Password đã hash từ database
+ */
+export const comparePassword = async (
+  plainPassword: string, 
+  hashedPassword: string
+): Promise<boolean> => {
+  return await bcrypt.compare(plainPassword, hashedPassword);
+};
+```
+
+### src\helpers\sendMail.ts
+```ts
+import nodemailer from "nodemailer";
+
+export const sendMail = async (
+  email: string,
+  subject: string,
+  otpCode: string
+): Promise<void> => {
+  try {
+    const transporter = nodemailer.createTransport({
+      service: "gmail",
+      auth: {
+        user: process.env.EMAIL_USER,
+        pass: process.env.EMAIL_PASSWORD,
+      },
+    });
+
+    const mailOptions = {
+      from: process.env.EMAIL_USER,
+      to: email,
+      subject: subject,
+      html: `
+<div style="max-width: 600px; margin: auto; border: 1px solid #eee; padding: 30px; font-family: Arial, sans-serif; background-color: #fff; color: #000;">
+  <!-- Header -->
+  <div style="text-align: center; padding-bottom: 20px;">
+    <h1 style="color: #e50914; margin-bottom: 5px; font-size: 28px;">MOVIX</h1>
+    <p style="margin: 0; color: #666; font-size: 14px;">Đặt vé thông minh, sống trọn cảm xúc</p>
+  </div>
+
+  <!-- Content box -->
+  <div style="background-color: #f9f9f9; padding: 30px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.08);">
+    <h2 style="color: #000; margin-top: 0;">Mã xác thực OTP của bạn</h2>
+    <p style="font-size: 16px; color: #333;">Xin chào,</p>
+    <p style="font-size: 16px; color: #333;">
+      Bạn đang thực hiện hành động cần xác minh trên <strong>Movix</strong>. 
+      Vui lòng sử dụng mã dưới đây để hoàn tất:
+    </p>
+
+    <!-- OTP code -->
+    <div style="text-align: center; margin: 25px 0;">
+      <span style="display: inline-block; padding: 14px 28px; font-size: 26px; font-weight: bold; background-color: #e50914; color: #fff; border-radius: 8px; letter-spacing: 4px;">
+        ${otpCode}
+      </span>
+    </div>
+
+    <p style="color: #555; font-size: 14px;">
+      Mã OTP này sẽ hết hạn sau <strong>5 phút</strong>. 
+      Nếu bạn không yêu cầu mã này, vui lòng bỏ qua email.
+    </p>
+
+    <p style="margin-top: 30px; color: #555; font-size: 14px;">
+      Trân trọng,<br/>
+      Đội ngũ <strong style="color: #e50914;">Movix</strong>
+    </p>
+  </div>
+
+  <!-- Footer -->
+  <div style="text-align: center; font-size: 12px; color: #999; margin-top: 30px;">
+    © ${new Date().getFullYear()} Movix. All rights reserved.
+    <span style="display:none">${Math.random().toString(36).substring(2,8)}</span>
+  </div>
+</div>
+
+
+`,
+    };
+
+    const info = await transporter.sendMail(mailOptions);
+    console.log("Email sent: " + info.response);
+  } catch (error) {
+    console.error("Error sending email:", error);
+  }
+};
+
+```
+
+### src\helpers\uploadCloudinary.ts
+```ts
+import { v2 as cloudinary, UploadApiResponse } from "cloudinary";
+import streamifier from "streamifier";
+
+// Cấu hình Cloudinary
+cloudinary.config({
+  cloud_name: process.env.CLOUD_NAME!,
+  api_key: process.env.CLOUD_KEY!,
+  api_secret: process.env.CLOUD_SECRET!,
+});
+
+// Hàm upload buffer lên Cloudinary
+const streamUpload = (buffer: Buffer): Promise<UploadApiResponse> => {
+  return new Promise((resolve, reject) => {
+    const stream = cloudinary.uploader.upload_stream(
+      {
+        resource_type: "auto",
+        folder: process.env.CLOUDINARY_FOLDER,
+        upload_preset: process.env.CLOUDINARY_UPLOAD_PRESET,
+      }, 
+      (error, result) => {
+        if (result) {
+          resolve(result);
+        } else {
+          reject(error);
+        }
+      }
+    );
+
+    streamifier.createReadStream(buffer).pipe(stream);
+  });
+};
+
+// Export hàm chính
+const uploadCloudinary = async (buffer: Buffer): Promise<string> => {
+  const result = await streamUpload(buffer);
+  return result.secure_url;
+};
+
+export default uploadCloudinary;
+
+```
+
+### src\middlewares\auth.middleware.ts
+```ts
+import { Request, Response, NextFunction } from "express";
+import User from "../api/v1/models/user.model";
+import { UserStatus } from "../types/user.type";
+import { verifyAccessToken, generateAccessToken, verifyRefreshToken, ITokenPayload } from "../helpers/jwt";
+
+/**
+ * ✅ JWT Authentication Middleware
+ * Kiểm tra Access Token từ cookie, nếu hết hạn thì tự động refresh
+ */
+export const authMiddleware =
+  (role: string) =>
+  async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const accessToken = req.cookies.accessToken;
+      const refreshToken = req.cookies.refreshToken;
+
+      // Nếu không có cả 2 token thì yêu cầu đăng nhập
+      if (!accessToken && !refreshToken) {
+        res.status(401).json({ 
+          code: 401, 
+          message: "Vui lòng đăng nhập để tiếp tục" 
+        });
+        return;
+      }
+
+      let tokenPayload: ITokenPayload | null = null;
+
+      // Thử verify access token trước
+      if (accessToken) {
+        try {
+          tokenPayload = verifyAccessToken(accessToken);
+        } catch (error: any) {
+          console.log("Access token expired or invalid:", error.message);
+          // Access token hết hạn/invalid, thử refresh
+        }
+      }
+
+      // Nếu access token không hợp lệ, thử refresh token
+      if (!tokenPayload && refreshToken) {
+        try {
+          const refreshPayload = verifyRefreshToken(refreshToken);
+          
+          // Kiểm tra refresh token có tồn tại trong DB không
+          const user = await User.findOne({ 
+            _id: refreshPayload.userId, 
+            refreshToken: refreshToken,
+            deleted: false 
+          }).select("-password -createdAt -updatedAt -deletedAt");
+
+          if (!user) {
+            res.status(401).json({ 
+              code: 401, 
+              message: "Phiên đăng nhập không hợp lệ, vui lòng đăng nhập lại" 
+            });
+            return;
+          }
+
+          if (user.status === UserStatus.BLOCKED) {
+            res.status(401).json({ 
+              code: 401, 
+              message: "Tài khoản đã bị khóa" 
+            });
+            return;
+          }
+
+          // Tạo access token mới
+          const newTokenPayload: ITokenPayload = {
+            userId: user._id.toString(),
+            username: user.username,
+            email: user.email,
+            role: user.role
+          };
+          
+          const newAccessToken = generateAccessToken(newTokenPayload);
+
+          // Set cookie access token mới
+          res.cookie("accessToken", newAccessToken, {
+            httpOnly: true,
+            secure: process.env.NODE_ENV === "production",
+            sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+            maxAge: 15 * 60 * 1000, // 15 phút
+          });
+
+          tokenPayload = newTokenPayload;
+          req.user = user; // Gán user vào request
+          
+        } catch (error) {
+          console.error("Refresh token invalid:", error);
+          res.status(401).json({ 
+            code: 401, 
+            message: "Phiên đăng nhập hết hạn, vui lòng đăng nhập lại" 
+          });
+          return;
+        }
+      }
+
+      // Nếu vẫn không có token hợp lệ
+      if (!tokenPayload) {
+        res.status(401).json({ 
+          code: 401, 
+          message: "Token không hợp lệ, vui lòng đăng nhập lại" 
+        });
+        return;
+      }
+
+      // Nếu chưa có user trong req (không phải từ refresh), lấy từ DB
+      if (!req.user) {
+        const user = await User.findById(tokenPayload.userId).select("-password -createdAt -updatedAt -deletedAt");
+        
+        if (!user || user.deleted) {
+          res.status(401).json({ 
+            code: 401, 
+            message: "Tài khoản không tồn tại" 
+          });
+          return;
+        }
+
+        if (user.status === UserStatus.BLOCKED) {
+          res.status(401).json({ 
+            code: 401, 
+            message: "Tài khoản đã bị khóa" 
+          });
+          return;
+        }
+
+        req.user = user;
+      }
+
+      // Kiểm tra role
+      if (req.user.role !== role) {
+        res.status(403).json({ 
+          code: 403, 
+          message: "Tài khoản không có quyền truy cập!" 
+        });
+        return;
+      }
+
+      next();
+    } catch (error) {
+      console.error("Auth middleware error:", error);
+      res.status(500).json({ message: "Lỗi server" });
+    }
+  };
+
+/**
+ * ✅ Optional Auth Middleware - cho những route có thể guest hoặc đăng nhập
+ */
+export const optionalAuthMiddleware = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const accessToken = req.cookies.accessToken;
+    const refreshToken = req.cookies.refreshToken;
+
+    if (!accessToken && !refreshToken) {
+      req.user = null; // guest
+      return next();
+    }
+
+    let tokenPayload: ITokenPayload | null = null;
+
+    // Thử verify access token
+    if (accessToken) {
+      try {
+        tokenPayload = verifyAccessToken(accessToken);
+      } catch (error) {
+        // Access token invalid, thử refresh
+      }
+    }
+
+    // Thử refresh nếu access token không hợp lệ
+    if (!tokenPayload && refreshToken) {
+      try {
+        const refreshPayload = verifyRefreshToken(refreshToken);
+        
+        const user = await User.findOne({ 
+          _id: refreshPayload.userId, 
+          refreshToken: refreshToken,
+          deleted: false 
+        }).select("-password -createdAt -updatedAt -deletedAt");
+
+        if (user && user.status === UserStatus.ACTIVE) {
+          const newTokenPayload: ITokenPayload = {
+            userId: user._id.toString(),
+            username: user.username,
+            email: user.email,
+            role: user.role
+          };
+          
+          const newAccessToken = generateAccessToken(newTokenPayload);
+
+          res.cookie("accessToken", newAccessToken, {
+            httpOnly: true,
+            secure: process.env.NODE_ENV === "production",
+            sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+            maxAge: 15 * 60 * 1000,
+          });
+
+          tokenPayload = newTokenPayload;
+          req.user = user;
+        }
+      } catch (error) {
+        console.log("Optional auth refresh failed:", error);
+      }
+    }
+
+    // Nếu có token hợp lệ nhưng chưa có user, lấy từ DB
+    if (tokenPayload && !req.user) {
+      const user = await User.findById(tokenPayload.userId).select("-password");
+      if (user && !user.deleted && user.status === UserStatus.ACTIVE) {
+        req.user = user;
+      } else {
+        req.user = null;
+      }
+    }
+
+    if (!req.user && !tokenPayload) {
+      req.user = null; // guest
+    }
+
+    next();
+  } catch (error) {
+    console.error("Optional auth middleware error:", error);
+    req.user = null; // fallback to guest
+    next();
+  }
+};
+```
+
+### src\middlewares\uploadCloud.middlewares.ts
+```ts
+import uploadToCloudinary from "../helpers/uploadCloudinary";
+import { Request, Response, NextFunction } from "express";
+export const uploadSingle = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  if (req.file) {
+    const result = await uploadToCloudinary(req.file.buffer); // THÊM AWAIT
+    req.body[req.file.fieldname] = result;
+  }
+  next();
+};
+
+export const uploadFields = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  type MulterFile = {
+    fieldname: string;
+    originalname: string;
+    encoding: string;
+    mimetype: string;
+    size: number;
+    buffer: Buffer;
+  };
+
+  const files = req.files as { [fieldname: string]: MulterFile[] };
+  console.log('files', files);
+  for (const key in files) {
+    req.body[key] = [];
+    const array = files[key];
+    for (const item of array) {
+      try {
+        const result = await uploadToCloudinary(item.buffer);
+        req.body[key].push(result);
+      } catch (error) {
+        console.error(error);
+      }
+    }
+  }
+
+  next();
+};
+
+```
+
+### src\types\cinema.type.ts
+```ts
+import {  Schema } from "mongoose";
+import { CommonStatus } from "./common.type"; 
+
+/**
+ * Định nghĩa các thuộc tính của một bộ Cinema.
+ * Đây là "nguồn chân lý" cho cấu trúc của một đối tượng Cinema.
+ */
+export interface ICinema {
+  name: string;
+  parentId: Schema.Types.ObjectId;
+  address: string;
+  avatar: string;
+  description: string;
+  cityId: Schema.Types.ObjectId; 
+  slug: string;
+  status: CommonStatus; // Sử dụng enum đã định nghĩa
+  deleted: boolean; // Dùng để đánh dấu xóa mềm
+  createdAt?: Date; // Tự động tạo bởi Mongoose
+  updatedAt?: Date; // Tự động tạo bởi Mongoose
+}
+
+/**
+ * Dùng cho update: tất cả các trường đều optional,
+ * để bạn có thể update 1 hoặc nhiều field mà không cần truyền toàn bộ.
+ */
+export type ICinemaUpdate = Partial<Omit<ICinema, "createdAt" | "updatedAt" | "slug">>;
+
+/**
+ * Type cho dữ liệu khi tạo mới Cinema.
+ * Bỏ các trường hệ thống như createdAt, updatedAt, deleted.
+ */
+export type ICinemaCreate = Omit<ICinema, "createdAt" | "updatedAt" | "deleted" | "slug">;
+
+```
+
+### src\types\common.type.ts
+```ts
+
+// Trạng thái chung cho nhiều entity
+export enum CommonStatus {
+  ACTIVE = "active",
+  INACTIVE = "inactive",
+}
+```
+
+### src\types\film.type.ts
+```ts
+import {  Schema } from "mongoose";
+import { CommonStatus } from "./common.type"; // Giả sử file common.type.ts nằm cùng cấp
+
+/**
+ * Định nghĩa các thuộc tính của một bộ phim.
+ * Đây là "nguồn chân lý" cho cấu trúc của một đối tượng Film.
+ */
+export interface IFilm {
+  title: string;
+  otherTitles?: string[]; // Có thể có hoặc không
+  categoryIds: Schema.Types.ObjectId[]; // Mảng các ID của danh mục
+  actors: string[];
+  directors: string[];
+  releaseDate: Date; // Dùng kiểu Date để dễ dàng thao tác
+  availableFormats: string[];
+  duration: number; // Thời lượng tính bằng phút
+  ageRating: string; // VD: T16, T18, P
+  trailer?: string; // Có thể có hoặc không
+  thumbnail: string;
+  filmLanguage: string;
+  subtitles: string;
+  description: string;
+  slug: string;
+  status: CommonStatus; // Sử dụng enum đã định nghĩa
+  isTrending: boolean;
+  deleted: boolean; // Dùng để đánh dấu xóa mềm
+  createdAt?: Date; // Tự động tạo bởi Mongoose
+  updatedAt?: Date; // Tự động tạo bởi Mongoose
+}
+
+/**
+ * Dùng cho update: tất cả các trường đều optional,
+ * để bạn có thể update 1 hoặc nhiều field mà không cần truyền toàn bộ.
+ */
+export type IFilmUpdate = Partial<Omit<IFilm, "createdAt" | "updatedAt" | "slug">>;
+
+/**
+ * Type cho dữ liệu khi tạo mới film.
+ * Bỏ các trường hệ thống như createdAt, updatedAt, deleted.
+ */
+export type IFilmCreate = Omit<IFilm, "createdAt" | "updatedAt" | "deleted" | "slug">;
+
+```
+
+### src\types\mongoose-slug-updater.d.ts
+```ts
+// src/types/mongoose-slug-updater.d.ts
+declare module 'mongoose-slug-updater' {
+  import { Plugin } from 'mongoose';
+  const slug: Plugin<any>;
+  export default slug;
+}
+
+```
+
+### src\types\user.type.ts
+```ts
+export enum UserStatus {
+  ACTIVE = "active",
+  BLOCKED = "blocked",
+  PENDING = "pending",
+}
+
+export enum UserRole {
+  USER = "user",
+  ADMIN = "admin",
+}
+
+export interface IUser {
+  username: string;
+  fullname?: string;
+  email: string;
+  password: string;
+  phone?: string;
+  address?: string;
+  avatar?: string;
+  role: UserRole;
+  // ✅ THAY ĐỔI: Bỏ token, thêm refreshToken
+  // token: string; // ❌ Xóa trường này
+  refreshToken?: string; // ✅ Lưu refresh token trong DB để có thể revoke
+  status: UserStatus;
+  deleted?: boolean;
+  deletedAt?: Date;
+  createdAt?: Date;
+  updatedAt?: Date;
+}
+```
+
+### src\types\express\index.d.ts
+```ts
+import { IUser } from "../../api/v1/models/user.model"; // hoặc kiểu user bạn đang sử dụng
+
+declare module "express-serve-static-core" {
+  interface Request {
+    user?: IUser; // Kiểu của user, có thể là Document, IUser,... tùy vào model của bạn
+  }
+}
+
+```

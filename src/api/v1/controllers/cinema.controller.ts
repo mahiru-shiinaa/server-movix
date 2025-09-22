@@ -1,3 +1,4 @@
+// src/api/v1/controllers/cinema.controller.ts
 import { ICinemaCreate, ICinemaUpdate } from "../../../types/cinema.type";
 import { Request, Response } from "express";
 import Cinema from "../models/cinema.model";
@@ -20,7 +21,13 @@ export const index = async (req: Request, res: Response): Promise<void> => {
       };
     }
 
-    const cinemas = await Cinema.find(query);
+    const cinemas = await Cinema.find(query).populate({
+      path: "parentId",
+      select: "name avatar",
+    }).populate({
+      path: "cityIds",
+      select: "name",
+    });
     res.status(200).json(cinemas);
   } catch (error) {
     res.status(500).json({ message: "Get cinemas failed", error });
@@ -32,42 +39,71 @@ export const index = async (req: Request, res: Response): Promise<void> => {
 
 // [GET] LIST SHOWTIME IN CINEMA: /api/v1/cinemas/:id/showTimes → lịch chiếu trong rạp.
 
-//[GET] DETAIL CINEMA: /api/v1/cinemas/:slug
-export const detail = async (req: Request, res: Response): Promise<void> => {
+//[GET] DETAIL BY SLUG (PUBLIC): /api/v1/cinemas/slug/:slug
+// Chỉ trả về cinema có status active và chưa bị xóa
+export const getBySlug = async (req: Request, res: Response): Promise<void> => {
   try {
     const slug = req.params.slug;
-    // Kiểm tra quyền user
-    const isAdmin = req.user && req.user.role === UserRole.ADMIN;
+    
+    const cinema = await Cinema.findOne({
+      slug,
+      status: CommonStatus.ACTIVE,
+      deleted: false,
+    })
+    .populate({
+      path: "cityIds", // ✅ THAY ĐỔI: từ cityId thành cityIds
+      select: "name",
+    })
+    .populate({
+      path: "parentId",
+      select: "name",
+    });
 
-    let query: any = { slug };
-
-    // Nếu không phải admin, chỉ hiển thị rạp chiếu active và chưa bị xóa
-    if (!isAdmin) {
-      query = {
-        slug,
-        status: CommonStatus.ACTIVE,
-        deleted: false,
-      };
-    }
-
-const cinema = await Cinema.findOne(query)
-  .populate({
-    path: "cityId",
-    select: "name",
-  })
-  .populate({
-    path: "parentId",
-    select: "name",
-  });
     if (!cinema) {  
       res.status(404).json({
-        message: isAdmin
-          ? "Không tìm thấy rạp chiếu"
-          : "Rạp chiếu không tốn tại hoặc chưa được công bố",
+        message: "Rạp chiếu không tồn tại hoặc chưa được công bố",
       });
       return;
     }
+    
     res.status(200).json(cinema);
+  } catch (error) {
+    res.status(500).json({ message: "Get cinema failed", error });
+    return;
+  }
+};
+
+//[GET] DETAIL BY ID (ADMIN): /api/v1/cinemas/:id
+// Trả về cinema cho admin (chỉ cần chưa bị xóa)
+export const getById = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const id = req.params.id;
+    
+    const cinema = await Cinema.findOne({
+      _id: id,
+      deleted: false,
+    })
+    .populate({
+      path: "cityIds", 
+      select: "name",
+    })
+    .populate({
+      path: "parentId",
+      select: "name avatar",
+    });
+
+    if (!cinema) {  
+      res.status(404).json({
+        message: "Không tìm thấy rạp chiếu",
+      });
+      return;
+    }
+    
+    res.status(200).json({
+      code: 200,
+      message: "Thành công",
+      data: cinema,
+    });
   } catch (error) {
     res.status(500).json({ message: "Get cinema failed", error });
     return;
