@@ -18,6 +18,7 @@ export interface ISeat {
   number: number;
   type: SeatType;
   seatKey: string; // Kết hợp của hàng và số, ví dụ: "A1", "B12"
+  partnerSeatKey?: string; // Chỉ có khi type là "couple", ví dụ: "C6"
 }
 
 /**

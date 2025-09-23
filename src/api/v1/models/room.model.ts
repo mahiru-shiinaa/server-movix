@@ -19,6 +19,7 @@ const seatSchema = new Schema<ISeat>(
       default: SeatType.STANDARD,
     },
     seatKey: { type: String, required: true, trim: true },
+    partnerSeatKey: { type: String, trim: true }, // Optional, chỉ có khi type là "couple"
   },
   {
     _id: false, // Không tạo _id riêng cho mỗi ghế
