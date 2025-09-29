@@ -1,3 +1,4 @@
+// src/api/v1/validators/room.validator.ts
 import { Request, Response, NextFunction } from "express";
 import { CommonStatus } from "../../../types/common.type";
 import { SeatType } from "../../../types/room.type";
@@ -131,16 +132,6 @@ export const validateCreateRoom = (
       }
       seatKeys.add(seat.seatKey);
 
-      // Validate seatKey format (should match row + number)
-      const expectedSeatKey = seat.row.trim().toUpperCase() + seat.number;
-      if (seat.seatKey !== expectedSeatKey) {
-        res.status(400).json({ 
-          code: 400, 
-          message: `Mã ghế ${seat.seatKey} không khớp với hàng ${seat.row} và số ${seat.number}` 
-        });
-        return;
-      }
-
       // Validate partnerSeatKey cho ghế couple
       if (seat.type === SeatType.COUPLE) {
         if (!seat.partnerSeatKey || typeof seat.partnerSeatKey !== 'string' || !seat.partnerSeatKey.trim()) {
@@ -240,12 +231,12 @@ export const validateCreateRoom = (
       const cleanedSeat: any = {
         ...seat,
         row: seat.row.trim().toUpperCase(),
-        seatKey: seat.row.trim().toUpperCase() + seat.number
+        seatKey: seat.seatKey.trim() 
       };
       
       // Chỉ giữ lại partnerSeatKey nếu là ghế couple
       if (seat.type === SeatType.COUPLE && seat.partnerSeatKey) {
-        cleanedSeat.partnerSeatKey = seat.partnerSeatKey;
+        cleanedSeat.partnerSeatKey = seat.partnerSeatKey.trim();
       }
       
       return cleanedSeat;
@@ -415,10 +406,13 @@ export const validateUpdateRoom = (
         }
       }
 
+      // ✅ FIX: Làm sạch dữ liệu update NHƯNG GIỮ NGUYÊN seatKey
       body.seatLayout = body.seatLayout.map((seat: any) => ({
         ...seat,
         row: seat.row.trim().toUpperCase(),
-        seatKey: seat.row.trim().toUpperCase() + seat.number
+        // ✅ QUAN TRỌNG: Giữ nguyên seatKey từ frontend
+        seatKey: seat.seatKey.trim(), // Chỉ trim, không tự tạo lại
+        ...(seat.partnerSeatKey && { partnerSeatKey: seat.partnerSeatKey.trim() })
       }));
     }
 
