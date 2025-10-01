@@ -9,11 +9,6 @@ import { UserRole } from "../../../types/user.type";
 
 /**
  * Kiểm tra xung đột thời gian giữa các suất chiếu trong cùng phòng
- * @param roomId - ID phòng chiếu
- * @param startTime - Thời gian bắt đầu
- * @param endTime - Thời gian kết thúc
- * @param excludeShowTimeId - ID suất chiếu cần loại trừ (dùng khi update)
- * @returns true nếu có xung đột, false nếu không
  */
 const checkTimeConflict = async (
   roomId: string,
@@ -25,16 +20,12 @@ const checkTimeConflict = async (
     roomId,
     deleted: false,
     $or: [
-      // Trường hợp 1: Suất chiếu mới bắt đầu trong khoảng thời gian của suất cũ
       { startTime: { $lte: startTime }, endTime: { $gt: startTime } },
-      // Trường hợp 2: Suất chiếu mới kết thúc trong khoảng thời gian của suất cũ
       { startTime: { $lt: endTime }, endTime: { $gte: endTime } },
-      // Trường hợp 3: Suất chiếu mới bao trùm suất cũ
       { startTime: { $gte: startTime }, endTime: { $lte: endTime } },
     ],
   };
 
-  // Nếu đang update, loại trừ chính suất chiếu đó
   if (excludeShowTimeId) {
     query._id = { $ne: excludeShowTimeId };
   }
@@ -43,24 +34,47 @@ const checkTimeConflict = async (
   return !!conflictingShowTime;
 };
 
-// [GET] LIST SHOWTIME: /api/v1/showtimes
+/**
+ * ✅ Kiểm tra xem suất chiếu có ghế nào đang bị BOOKED hay không
+ */
+const hasBookedSeats = (seats: any[]): boolean => {
+  return seats.some(seat => seat.status === ShowTimeSeatStatus.BOOKED);
+};
+
+
+// [GET] LIST SHOWTIME
 export const index = async (req: Request, res: Response): Promise<void> => {
   try {
     const isAdmin = req.user && req.user.role === UserRole.ADMIN;
 
+    // Pagination params
+    const page = parseInt(req.query.page as string) || 1;
+    const limit = 10;
+    const skip = (page - 1) * limit;
+
     let query: any = { deleted: false };
 
-    // Nếu không phải admin, chỉ hiển thị suất chiếu active
-    if (!isAdmin) {
+    // Filter by status
+    if (req.query.status) {
+      // Validate status value
+      if (Object.values(CommonStatus).includes(req.query.status as CommonStatus)) {
+        query.status = req.query.status;
+      }
+    } else if (!isAdmin) {
+      // Non-admin users only see active showtimes
       query.status = CommonStatus.ACTIVE;
     }
 
-    // Hỗ trợ filter theo filmId, cinemaId, roomId
+    // Filter by filmId
     if (req.query.filmId) query.filmId = req.query.filmId;
+    
+    // Filter by cinemaId
     if (req.query.cinemaId) query.cinemaId = req.query.cinemaId;
+    
+    // Filter by roomId
     if (req.query.roomId) query.roomId = req.query.roomId;
 
-    // Filter theo khoảng thời gian
+    // Filter by date range
     if (req.query.startDate || req.query.endDate) {
       query.startTime = {};
       if (req.query.startDate) {
@@ -71,16 +85,28 @@ export const index = async (req: Request, res: Response): Promise<void> => {
       }
     }
 
+    // Get total count for pagination
+    const total = await ShowTime.countDocuments(query);
+
+    // Get paginated data
     const showtimes = await ShowTime.find(query)
-      .populate({ path: "filmId", select: "title thumbnail duration slug" })
+      .populate({ path: "filmId", select: "title" })
       .populate({ path: "cinemaId", select: "name address" })
       .populate({ path: "roomId", select: "name" })
-      .sort({ startTime: 1 });
+      .sort({ startTime: 1 })
+      .skip(skip)
+      .limit(limit);
 
     res.status(200).json({
       code: 200,
       message: "Thành công",
       data: showtimes,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit),
+      },
     });
   } catch (error) {
     console.error("Get showtimes error:", error);
@@ -88,7 +114,7 @@ export const index = async (req: Request, res: Response): Promise<void> => {
   }
 };
 
-// [GET] DETAIL BY ID: /api/v1/showtimes/:id
+// [GET] DETAIL BY ID
 export const getById = async (req: Request, res: Response): Promise<void> => {
   try {
     const { id } = req.params;
@@ -96,7 +122,6 @@ export const getById = async (req: Request, res: Response): Promise<void> => {
 
     let query: any = { _id: id, deleted: false };
 
-    // Nếu không phải admin, chỉ xem được suất chiếu active
     if (!isAdmin) {
       query.status = CommonStatus.ACTIVE;
     }
@@ -122,7 +147,7 @@ export const getById = async (req: Request, res: Response): Promise<void> => {
   }
 };
 
-// [POST] CREATE SHOWTIME: /api/v1/showtimes
+// [POST] CREATE SHOWTIME
 export const create = async (req: Request, res: Response): Promise<void> => {
   try {
     const createData = req.body as IShowTimeCreate;
@@ -138,7 +163,16 @@ export const create = async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
-    // 2. Kiểm tra phim có tồn tại không
+    // ✅ 2. KIỂM TRA cinemaId PHẢI KHỚP với cinema của room
+    if (createData.cinemaId.toString() !== room.cinemaId.toString()) {
+      res.status(400).json({
+        code: 400,
+        message: "Rạp chiếu không khớp với rạp chứa phòng này",
+      });
+      return;
+    }
+
+    // 3. Kiểm tra phim có tồn tại không
     const film = await Film.findOne({
       _id: createData.filmId,
       deleted: false,
@@ -149,7 +183,7 @@ export const create = async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
-    // 3. Kiểm tra rạp có tồn tại không
+    // 4. Kiểm tra rạp có tồn tại không (optional, vì đã kiểm tra qua room)
     const cinema = await Cinema.findOne({
       _id: createData.cinemaId,
       deleted: false,
@@ -160,15 +194,25 @@ export const create = async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
-    // 4. Kiểm tra format có được hỗ trợ bởi phòng không
-    if (!room.supportedFormats.includes(createData.format)) {
+    //  5. Kiểm tra format có được hỗ trợ bởi PHIM không
+    if (!film.availableFormats.includes(createData.format)) {
       res.status(400).json({
-        message: `Phòng ${room.name} không hỗ trợ định dạng ${createData.format}`,
+        code: 400,
+        message: `Phim "${film.title}" không hỗ trợ định dạng ${createData.format}. Các định dạng khả dụng: ${film.availableFormats.join(", ")}`,
       });
       return;
     }
 
-    // 5. Kiểm tra xung đột thời gian
+    //  6. Kiểm tra format có được hỗ trợ bởi PHÒNG không
+    if (!room.supportedFormats.includes(createData.format)) {
+      res.status(400).json({
+        code: 400,
+        message: `Phòng ${room.name} không hỗ trợ định dạng ${createData.format}. Các định dạng khả dụng: ${room.supportedFormats.join(", ")}`,
+      });
+      return;
+    }
+
+    // 7. Kiểm tra xung đột thời gian
     const hasConflict = await checkTimeConflict(
       createData.roomId.toString(),
       createData.startTime,
@@ -182,20 +226,20 @@ export const create = async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
-    // 6. Snapshot seatLayout từ room và thêm status
+    // 8. Snapshot seatLayout từ room và thêm status
     const seats = room.seatLayout.map((seat) => ({
       row: seat.row,
       number: seat.number,
       type: seat.type,
       seatKey: seat.seatKey,
       partnerSeatKey: seat.partnerSeatKey,
-      status: ShowTimeSeatStatus.AVAILABLE, // ✅ Thêm status
+      status: ShowTimeSeatStatus.AVAILABLE,
     }));
 
-    // 7. Tạo showtime với seats đã snapshot
+    // 9. Tạo showtime với seats đã snapshot
     const showtime = await ShowTime.create({
       ...createData,
-      seats, // ✅ Sử dụng seats đã snapshot
+      seats,
     });
 
     res.status(201).json({
@@ -209,7 +253,7 @@ export const create = async (req: Request, res: Response): Promise<void> => {
   }
 };
 
-// [PATCH] EDIT SHOWTIME: /api/v1/showtimes/:id
+// ✅ [PATCH] EDIT SHOWTIME - CHỈ CHO PHÉP SỬA MỘT SỐ TRƯỜNG
 export const edit = async (req: Request, res: Response): Promise<void> => {
   try {
     const { id } = req.params;
@@ -226,10 +270,39 @@ export const edit = async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
-    // 2. Nếu update roomId, kiểm tra phòng mới
-    if (updateData.roomId) {
+    // ✅ 2. KIỂM TRA CÓ GHẾ NÀO ĐÃ BOOKED HAY KHÔNG
+    if (hasBookedSeats(currentShowtime.seats)) {
+      res.status(400).json({
+        code: 400,
+        message: "Không thể sửa suất chiếu đã có người đặt vé",
+      });
+      return;
+    }
+
+    // ✅ 3. Nếu update format, kiểm tra format có được hỗ trợ không
+    if (updateData.format) {
+      // Kiểm tra phim có hỗ trợ format này không
+      const film = await Film.findOne({
+        _id: currentShowtime.filmId,
+        deleted: false,
+      });
+
+      if (!film) {
+        res.status(404).json({ message: "Không tìm thấy phim" });
+        return;
+      }
+
+      if (!film.availableFormats.includes(updateData.format)) {
+        res.status(400).json({
+          code: 400,
+          message: `Phim "${film.title}" không hỗ trợ định dạng ${updateData.format}. Các định dạng khả dụng: ${film.availableFormats.join(", ")}`,
+        });
+        return;
+      }
+
+      // Kiểm tra phòng có hỗ trợ format này không
       const room = await Room.findOne({
-        _id: updateData.roomId,
+        _id: currentShowtime.roomId,
         deleted: false,
       });
 
@@ -238,63 +311,25 @@ export const edit = async (req: Request, res: Response): Promise<void> => {
         return;
       }
 
-      // Kiểm tra format có được hỗ trợ không
-      const checkFormat = updateData.format || currentShowtime.format;
-      if (!room.supportedFormats.includes(checkFormat)) {
+      if (!room.supportedFormats.includes(updateData.format)) {
         res.status(400).json({
-          message: `Phòng ${room.name} không hỗ trợ định dạng ${checkFormat}`,
+          code: 400,
+          message: `Phòng ${room.name} không hỗ trợ định dạng ${updateData.format}. Các định dạng khả dụng: ${room.supportedFormats.join(", ")}`,
         });
         return;
       }
-
-      // ✅ Snapshot lại seats từ phòng mới
-      updateData.seats = room.seatLayout.map((seat) => ({
-        row: seat.row,
-        number: seat.number,
-        type: seat.type,
-        seatKey: seat.seatKey,
-        partnerSeatKey: seat.partnerSeatKey,
-        status: ShowTimeSeatStatus.AVAILABLE,
-      }));
     }
 
-    // 3. Nếu update filmId, kiểm tra phim
-    if (updateData.filmId) {
-      const film = await Film.findOne({
-        _id: updateData.filmId,
-        deleted: false,
-      });
-
-      if (!film) {
-        res.status(404).json({ message: "Không tìm thấy phim" });
-        return;
-      }
-    }
-
-    // 4. Nếu update cinemaId, kiểm tra rạp
-    if (updateData.cinemaId) {
-      const cinema = await Cinema.findOne({
-        _id: updateData.cinemaId,
-        deleted: false,
-      });
-
-      if (!cinema) {
-        res.status(404).json({ message: "Không tìm thấy rạp chiếu" });
-        return;
-      }
-    }
-
-    // 5. Nếu update thời gian, kiểm tra xung đột
+    // ✅ 4. Nếu update thời gian, kiểm tra xung đột
     if (updateData.startTime || updateData.endTime) {
       const checkStartTime = updateData.startTime || currentShowtime.startTime;
       const checkEndTime = updateData.endTime || currentShowtime.endTime;
-      const checkRoomId = updateData.roomId || currentShowtime.roomId;
 
       const hasConflict = await checkTimeConflict(
-        checkRoomId.toString(),
+        currentShowtime.roomId.toString(),
         checkStartTime,
         checkEndTime,
-        id // Loại trừ chính showtime này
+        id
       );
 
       if (hasConflict) {
@@ -305,7 +340,7 @@ export const edit = async (req: Request, res: Response): Promise<void> => {
       }
     }
 
-    // 6. Update showtime
+    // ✅ 5. Update showtime (CHỈ CÁC TRƯỜNG ĐƯỢC PHÉP)
     const showtime = await ShowTime.findByIdAndUpdate(id, updateData, {
       new: true,
     });
@@ -321,7 +356,7 @@ export const edit = async (req: Request, res: Response): Promise<void> => {
   }
 };
 
-// [DELETE] DELETE SHOWTIME: /api/v1/showtimes/:id
+// ✅ [DELETE] DELETE SHOWTIME - KIỂM TRA GHẾ BOOKED
 export const remove = async (req: Request, res: Response): Promise<void> => {
   try {
     const { id } = req.params;
@@ -333,13 +368,10 @@ export const remove = async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
-    // Kiểm tra xem có ghế nào đã được đặt chưa
-    const hasBookedSeats = showtime.seats.some(
-      (seat) => seat.status === ShowTimeSeatStatus.BOOKED
-    );
-
-    if (hasBookedSeats) {
+    // ✅ Kiểm tra xem có ghế nào đã được đặt chưa
+    if (hasBookedSeats(showtime.seats)) {
       res.status(400).json({
+        code: 400,
         message: "Không thể xóa suất chiếu đã có người đặt vé",
       });
       return;

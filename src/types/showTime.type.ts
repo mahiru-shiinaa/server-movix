@@ -50,9 +50,20 @@ export interface IShowTime {
 
 /**
  * Kiểu dữ liệu dùng để cập nhật một Suất chiếu.
- * Tất cả các trường đều là tùy chọn.
+ * CHỈ CHO PHÉP sửa: format, basePrice, seatTypes, startTime, endTime, status
+ * KHÔNG CHO PHÉP sửa: filmId, cinemaId, roomId, seats
  */
-export type IShowTimeUpdate = Partial<Omit<IShowTime, "createdAt" | "updatedAt">>;
+export type IShowTimeUpdate = Partial<
+  Omit<IShowTime, 
+    "createdAt" | 
+    "updatedAt" | 
+    "filmId" |      
+    "cinemaId" |   
+    "roomId" |     
+    "seats" |       
+    "deleted"       
+  >
+>;
 
 /**
  * Kiểu dữ liệu để tạo một Suất chiếu mới.

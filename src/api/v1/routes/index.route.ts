@@ -24,7 +24,7 @@ const mainV1Routes = (app: Express) => {
   app.use(version + "/films", filmRoutes);
   app.use(version + "/cinemas", cinemaRoutes);
   app.use(version + "/rooms", roomRoutes);
-  app.use(version + "/showtimes", showTimeRoutes);
+  app.use(version + "/show-times", showTimeRoutes);
   app.use(version + "/upload", uploadRoutes);
 };
 

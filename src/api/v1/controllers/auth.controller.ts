@@ -1,7 +1,5 @@
 import { Request, Response } from "express";
 import User from "../models/user.model";
-// ✅ THAY ĐỔI: Import bcrypt và jwt helpers thay vì md5
-// import md5 from "md5"; // ❌ Xóa md5
 import { hashPassword, comparePassword } from "../../../helpers/password";
 import {
   generateAccessToken,
@@ -243,7 +241,7 @@ export const login = async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
-    // ✅ THAY ĐỔI: Dùng bcrypt để so sánh password
+    // Dùng bcrypt để so sánh password
     const isMatch = await comparePassword(password, user.password);
     if (!isMatch) {
       res.status(400).json({ message: "Mật khẩu không đúng!" });

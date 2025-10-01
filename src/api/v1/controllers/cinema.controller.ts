@@ -2,6 +2,7 @@
 import { ICinemaCreate, ICinemaUpdate } from "../../../types/cinema.type";
 import { Request, Response } from "express";
 import Cinema from "../models/cinema.model";
+import ShowTime from "../models/showTime.model";
 import { UserRole } from "../../../types/user.type";
 import { CommonStatus } from "../../../types/common.type";
 
@@ -35,10 +36,6 @@ export const index = async (req: Request, res: Response): Promise<void> => {
   }
 };
 
-//[GET] LIST FILM IN CINEMA: /api/v1/cinemas/:id/films → danh sách phim trong 1 rạp.
-
-// [GET] LIST SHOWTIME IN CINEMA: /api/v1/cinemas/:id/showTimes → lịch chiếu trong rạp.
-
 //[GET] DETAIL BY SLUG (PUBLIC): /api/v1/cinemas/slug/:slug
 // Chỉ trả về cinema có status active và chưa bị xóa
 export const getBySlug = async (req: Request, res: Response): Promise<void> => {
@@ -51,7 +48,7 @@ export const getBySlug = async (req: Request, res: Response): Promise<void> => {
       deleted: false,
     })
     .populate({
-      path: "cityIds", // ✅ THAY ĐỔI: từ cityId thành cityIds
+      path: "cityIds",
       select: "name",
     })
     .populate({
@@ -145,12 +142,35 @@ export const edit = async (req: Request, res: Response): Promise<void> => {
 export const remove = async (req: Request, res: Response): Promise<void> => {
   try {
     const id = req.params.id;
-    const cinema = await Cinema.findByIdAndDelete(id);
+    
+    // ✅ KIỂM TRA: Không cho xóa rạp nếu còn suất chiếu tương lai
+    const hasUpcomingShowtimes = await ShowTime.exists({
+      cinemaId: id,
+      deleted: false,
+      startTime: { $gte: new Date() },
+    });
+
+    if (hasUpcomingShowtimes) {
+      res.status(400).json({
+        code: 400,
+        message: "Không thể xóa rạp khi còn suất chiếu sắp tới",
+      });
+      return;
+    }
+
+    const cinema = await Cinema.findById(id);
     if (!cinema) {
       res.status(404).json({ message: "Không tìm thấy rạp chiếu" });
       return;
     }
-    res.status(200).json({ message: "Xóa rạp chiếu thành công" });
+
+    cinema.deleted = true;
+    await cinema.save();
+    
+    res.status(200).json({ 
+      code: 200,
+      message: "Xóa rạp chiếu thành công" 
+    });
   } catch (error) {
     res.status(500).json({ message: "Delete cinema failed", error });
     return;

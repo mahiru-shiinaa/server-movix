@@ -38,7 +38,7 @@ export interface IRoom {
 /**
  * Dùng cho cập nhật: tất cả các trường đều là tùy chọn.
  */
-export type IRoomUpdate = Partial<Omit<IRoom, "createdAt" | "updatedAt">>;
+export type IRoomUpdate = Partial<Omit<IRoom, "createdAt" | "updatedAt" >>;
 
 /**
  * Kiểu dữ liệu để tạo một Phòng chiếu mới.

@@ -233,7 +233,7 @@ export const validateCreateShowTime = (
   }
 };
 
-// Validate cập nhật showtime
+// ✅ Validate cập nhật showtime - CHỈ CHO PHÉP SỬA MỘT SỐ TRƯỜNG
 export const validateUpdateShowTime = (
   req: Request,
   res: Response,
@@ -242,41 +242,29 @@ export const validateUpdateShowTime = (
   try {
     const body = { ...req.body };
 
-    // Loại bỏ các trường không được phép sửa
-    const forbiddenFields = ["createdAt", "updatedAt"];
-    forbiddenFields.forEach((field) => delete body[field]);
-
-    // Validate từng trường nếu có trong body
-    if (body.filmId !== undefined) {
-      if (!isValidObjectId(body.filmId)) {
+    // ✅ Loại bỏ các trường KHÔNG ĐƯỢC PHÉP sửa
+    const forbiddenFields = [
+      "filmId",      // ❌ Không cho sửa phim
+      "cinemaId",    // ❌ Không cho sửa rạp
+      "roomId",      // ❌ Không cho sửa phòng
+      "seats",       // ❌ Không cho sửa trực tiếp danh sách ghế
+      "createdAt",
+      "updatedAt"
+    ];
+    
+    forbiddenFields.forEach((field) => {
+      if (body[field] !== undefined) {
         res.status(400).json({
           code: 400,
-          message: "ID phim không hợp lệ",
+          message: `Không được phép sửa trường "${field}"`,
         });
         return;
       }
-    }
+    });
 
-    if (body.cinemaId !== undefined) {
-      if (!isValidObjectId(body.cinemaId)) {
-        res.status(400).json({
-          code: 400,
-          message: "ID rạp chiếu không hợp lệ",
-        });
-        return;
-      }
-    }
+    // ✅ CHỈ CHO PHÉP SỬA: format, basePrice, seatTypes, startTime, endTime, status
 
-    if (body.roomId !== undefined) {
-      if (!isValidObjectId(body.roomId)) {
-        res.status(400).json({
-          code: 400,
-          message: "ID phòng chiếu không hợp lệ",
-        });
-        return;
-      }
-    }
-
+    // Validate startTime nếu có
     if (body.startTime !== undefined) {
       const startTimeObj = new Date(body.startTime);
       if (isNaN(startTimeObj.getTime())) {
@@ -286,10 +274,9 @@ export const validateUpdateShowTime = (
         });
         return;
       }
-
-      // Không kiểm tra thời gian phải sau hiện tại khi update (cho phép sửa suất chiếu đã qua)
     }
 
+    // Validate endTime nếu có
     if (body.endTime !== undefined) {
       const endTimeObj = new Date(body.endTime);
       if (isNaN(endTimeObj.getTime())) {
@@ -324,6 +311,7 @@ export const validateUpdateShowTime = (
       }
     }
 
+    // Validate format nếu có
     if (body.format !== undefined) {
       const validFormats = ["2D", "3D", "IMAX", "4DX"];
       if (!validFormats.includes(body.format)) {
@@ -335,6 +323,7 @@ export const validateUpdateShowTime = (
       }
     }
 
+    // Validate basePrice nếu có
     if (body.basePrice !== undefined) {
       if (typeof body.basePrice !== "number" || body.basePrice <= 0) {
         res.status(400).json({
@@ -353,6 +342,7 @@ export const validateUpdateShowTime = (
       }
     }
 
+    // Validate seatTypes nếu có
     if (body.seatTypes !== undefined) {
       if (!Array.isArray(body.seatTypes) || body.seatTypes.length === 0) {
         res.status(400).json({
@@ -399,44 +389,7 @@ export const validateUpdateShowTime = (
       }
     }
 
-    // Validate seats nếu có (thường không cho phép update trực tiếp)
-    if (body.seats !== undefined) {
-      if (!Array.isArray(body.seats)) {
-        res.status(400).json({
-          code: 400,
-          message: "Danh sách ghế phải là mảng",
-        });
-        return;
-      }
-
-      // Validate từng ghế
-      for (const seat of body.seats) {
-        if (!seat.seatKey || typeof seat.seatKey !== "string") {
-          res.status(400).json({
-            code: 400,
-            message: "Mỗi ghế phải có mã ghế (seatKey)",
-          });
-          return;
-        }
-
-        if (!seat.status || !Object.values(ShowTimeSeatStatus).includes(seat.status)) {
-          res.status(400).json({
-            code: 400,
-            message: `Trạng thái ghế không hợp lệ. Chỉ chấp nhận: ${Object.values(ShowTimeSeatStatus).join(", ")}`,
-          });
-          return;
-        }
-
-        if (!seat.type || !Object.values(SeatType).includes(seat.type)) {
-          res.status(400).json({
-            code: 400,
-            message: `Loại ghế không hợp lệ. Chỉ chấp nhận: ${Object.values(SeatType).join(", ")}`,
-          });
-          return;
-        }
-      }
-    }
-
+    // Validate status nếu có
     if (body.status !== undefined && !Object.values(CommonStatus).includes(body.status)) {
       res.status(400).json({
         code: 400,

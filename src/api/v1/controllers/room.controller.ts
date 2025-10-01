@@ -1,6 +1,7 @@
 import { IRoomCreate, IRoomUpdate } from "../../../types/room.type";
 import { Request, Response } from "express";
 import Room from "../models/room.model";
+import ShowTime from "../models/showTime.model";
 import { UserRole } from "../../../types/user.type";
 import { CommonStatus } from "../../../types/common.type";
 
@@ -114,6 +115,32 @@ export const edit = async (req: Request, res: Response): Promise<void> => {
     const id = req.params.id;
     const updateData = req.body as IRoomUpdate;
 
+    // ✅ KIỂM TRA: Nếu đổi cinemaId, phải đảm bảo không có showtime nào
+    if (updateData.cinemaId) {
+      const currentRoom = await Room.findById(id);
+      if (!currentRoom) {
+        res.status(404).json({ message: "Không tìm thấy phòng chiếu" });
+        return;
+      }
+
+      // Chỉ kiểm tra nếu cinemaId thực sự thay đổi
+      if (updateData.cinemaId.toString() !== currentRoom.cinemaId.toString()) {
+        const hasUpcomingShowtimes = await ShowTime.exists({
+          roomId: id,
+          deleted: false,
+          startTime: { $gte: new Date() }, // Còn suất chiếu tương lai
+        });
+
+        if (hasUpcomingShowtimes) {
+          res.status(400).json({
+            code: 400,
+            message: "Không thể chuyển phòng sang rạp khác khi còn suất chiếu sắp tới",
+          });
+          return;
+        }
+      }
+    }
+
     // Nếu cập nhật tên phòng hoặc cinemaId, kiểm tra trùng lặp
     if (updateData.name || updateData.cinemaId) {
       const currentRoom = await Room.findById(id);
@@ -165,6 +192,22 @@ export const edit = async (req: Request, res: Response): Promise<void> => {
 export const remove = async (req: Request, res: Response): Promise<void> => {
   try {
     const id = req.params.id;
+    
+    // ✅ KIỂM TRA: Không cho xóa phòng nếu còn suất chiếu tương lai
+    const hasUpcomingShowtimes = await ShowTime.exists({
+      roomId: id,
+      deleted: false,
+      startTime: { $gte: new Date() },
+    });
+
+    if (hasUpcomingShowtimes) {
+      res.status(400).json({
+        code: 400,
+        message: "Không thể xóa phòng khi còn suất chiếu sắp tới",
+      });
+      return;
+    }
+
     const room = await Room.findById(id);
 
     if (!room) {
