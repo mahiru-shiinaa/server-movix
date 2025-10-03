@@ -9,6 +9,7 @@ import cinemaRoutes from "./cinema.route";
 import uploadRoutes from "./upload.route";
 import roomRoutes from "./room.route";
 import showTimeRoutes from "./showTime.route";
+import commentRoutes from "./comment.route";
 
 const mainV1Routes = (app: Express) => {
   const version = "/api/v1";
@@ -25,6 +26,7 @@ const mainV1Routes = (app: Express) => {
   app.use(version + "/cinemas", cinemaRoutes);
   app.use(version + "/rooms", roomRoutes);
   app.use(version + "/show-times", showTimeRoutes);
+  app.use(version + "/comments", commentRoutes);
   app.use(version + "/upload", uploadRoutes);
 };
 
